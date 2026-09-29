@@ -1,19 +1,29 @@
 /**
- * Pair words into the receipt JSON. No image work lives here, so the page can
- * run this after Tesseract without pulling OpenCV into the main bundle via
- * this module. The OpenCV import stays in the worker.
+ * Pair words into the receipt JSON. No image work lives here, so the same
+ * builders serve both readers and `tools/score.test.ts`.
  */
 
 import {
   chooseReceiptKind,
-  fieldsFromWords,
+  findInventoryHeader,
+  INVENTORY_HEADERS,
   inventoryRowsFromWords,
   invoiceRowsFromWords,
   settlementRowsFromWords,
   type WordBox,
 } from '../layout/rows'
-import type { Detection, OcrResult, ProcessingMeta, ReceiptKind, StageName } from '../types'
-import { validateInventory, validateInvoice, validateSettlements } from './validate'
+import type { OcrResult, ProcessingMeta, ReceiptKind } from '../types'
+import {
+  solveInventoryCounts,
+  validateInventory,
+  validateInvoice,
+  validateSettlements,
+} from './validate'
+
+/** The settlements table's printed header: `Game-Pack  Name  Date Settled`. */
+const SETTLEMENT_HEADERS = ['Game-Pack', 'Name', 'Date Settled'] as const
+/** The invoice prints no column header; these name its two sides. */
+const INVOICE_HEADERS = ['label', 'value'] as const
 
 /**
  * The pack count the settlements receipt prints below its table.
@@ -32,48 +42,33 @@ function statedPackTotal(words: readonly WordBox[]): number | null {
   return Number.isFinite(total) ? total : null
 }
 
-export interface PreparedFacts {
-  tiltCorrected: boolean
-  perspectiveCorrected: boolean
-  watermarkSuppressed: boolean
-  rotationAngleDeg: number
-  documentQuad: ProcessingMeta['documentQuad']
-  sourceSize: ProcessingMeta['sourceSize']
-  rectifiedSize: ProcessingMeta['rectifiedSize']
-  watermarkPixelRatio: number
-  warnings: string[]
-  timingsMs: Partial<Record<StageName, number>>
-  /* --- which reader produced the words; defaults describe the Tesseract path --- */
-  detectorModel?: string
-  recognizerModel?: string
-  detectorBackend?: ProcessingMeta['detectorBackend']
-  executionProvider?: string
-}
+/** What the client knows about the read before the words become rows. */
+type ReadFacts = Omit<ProcessingMeta, 'wordCount' | 'totalMs' | 'warnings'>
 
 export function assembleReceipt(
   words: readonly WordBox[],
-  facts: PreparedFacts,
+  facts: ReadFacts,
   rowOverlapRatio: number,
-  totalMs: number,
 ): OcrResult {
   const rows = inventoryRowsFromWords(words, rowOverlapRatio)
   const settlements = settlementRowsFromWords(words, rowOverlapRatio)
   const invoice = invoiceRowsFromWords(words, rowOverlapRatio)
   const kind = chooseReceiptKind(rows, settlements, invoice)
-  const fields = kind === 'invoice' ? invoice : fieldsFromWords(words, rowOverlapRatio)
-  const warnings = [...facts.warnings]
+  const fields = kind === 'invoice' ? invoice : []
+  const warnings: string[] = []
   if (words.length === 0) {
     warnings.push('No words were read. The page may be blank after watermark removal.')
   }
 
-  const keptRows = kind === 'inventory' ? rows : []
+  const solved = kind === 'inventory' ? solveInventoryCounts(rows) : { rows: [], issues: [] }
+  const keptRows = solved.rows
   const keptSettlements = kind === 'settlements' ? settlements : []
 
   // Checked against the rows that are actually returned, so an issue's row
   // indices address the same array the caller sees.
   const validation =
     kind === 'inventory'
-      ? validateInventory(keptRows)
+      ? [...solved.issues, ...validateInventory(keptRows)]
       : kind === 'settlements'
         ? validateSettlements(keptSettlements, statedPackTotal(words))
         : validateInvoice(fields)
@@ -81,63 +76,31 @@ export function assembleReceipt(
   // `warnings` so a caller that only reads the meta still learns about it.
   warnings.push(...validation.map((issue) => issue.message))
 
+  const headers =
+    kind === 'inventory'
+      ? (findInventoryHeader(words)?.labels ?? defaultHeaders(kind))
+      : defaultHeaders(kind)
+
   return {
     kind,
+    headers,
     rows: keptRows,
     settlements: keptSettlements,
     fields,
-    columns: [],
-    rawDetections: wordsToDetections(words),
     validation,
-    processingMeta: {
-      tiltCorrected: facts.tiltCorrected,
-      perspectiveCorrected: facts.perspectiveCorrected,
-      watermarkSuppressed: facts.watermarkSuppressed,
-      rotationAngleDeg: facts.rotationAngleDeg,
-      documentQuad: facts.documentQuad,
-      sourceSize: facts.sourceSize,
-      rectifiedSize: facts.rectifiedSize,
-      watermarkPixelRatio: facts.watermarkPixelRatio,
-      detectorModel: facts.detectorModel ?? 'tesseract-eng',
-      recognizerModel: facts.recognizerModel ?? 'tesseract-eng',
-      detectorBackend: facts.detectorBackend ?? 'tesseract',
-      executionProvider: facts.executionProvider ?? 'tesseract',
-      timingsMs: facts.timingsMs,
-      totalMs,
-      warnings,
-    },
+    processingMeta: { ...facts, wordCount: words.length, totalMs: 0, warnings },
   }
 }
 
-/** The JSON shown in the app: one kind, and only that kind's columns. */
-export function toPublicJson(result: OcrResult): { kind: ReceiptKind; rows: object[] } {
+/** Each row's cells, left to right in the order the ticket prints its columns. */
+export function rowCells(result: OcrResult): string[][] {
   switch (result.kind) {
     case 'inventory':
-      return {
-        kind: 'inventory',
-        rows: result.rows.map(({ game, name, int, rec, act, set }) => ({
-          game,
-          name,
-          int,
-          rec,
-          act,
-          set,
-        })),
-      }
+      return result.rows.map(({ game, name, int, rec, act, set }) => [game, name, int, rec, act, set])
     case 'settlements':
-      return {
-        kind: 'settlements',
-        rows: result.settlements.map(({ gamePack, name, dateSettled }) => ({
-          gamePack,
-          name,
-          dateSettled,
-        })),
-      }
+      return result.settlements.map(({ gamePack, name, dateSettled }) => [gamePack, name, dateSettled])
     case 'invoice':
-      return {
-        kind: 'invoice',
-        rows: result.fields.map(({ label, value }) => ({ label, value })),
-      }
+      return result.fields.map(({ label, value }) => [label, value])
     default: {
       const unreachable: never = result.kind
       return unreachable
@@ -145,28 +108,37 @@ export function toPublicJson(result: OcrResult): { kind: ReceiptKind; rows: obje
   }
 }
 
-function wordsToDetections(words: readonly WordBox[]): Detection[] {
-  return words.map((word, id) => {
-    const x = word.x
-    const y = word.y
-    return {
-      id,
-      box: { x, y, width: word.width, height: word.height },
-      polygon: [
-        { x, y },
-        { x: x + word.width, y },
-        { x: x + word.width, y: y + word.height },
-        { x, y: y + word.height },
-      ],
-      angle: 0,
-      score: word.confidence,
-      text: word.text,
-      rawText: word.text,
-      detScore: word.confidence,
-      recScore: word.confidence,
-      confidence: word.confidence,
-      columnIndex: null,
-      rowIndex: null,
+/** The printed headers for `kind`, used when the page's own were not read. */
+function defaultHeaders(kind: ReceiptKind): string[] {
+  switch (kind) {
+    case 'inventory':
+      return [...INVENTORY_HEADERS]
+    case 'settlements':
+      return [...SETTLEMENT_HEADERS]
+    case 'invoice':
+      return [...INVOICE_HEADERS]
+    default: {
+      const unreachable: never = kind
+      return unreachable
     }
-  })
+  }
+}
+
+/**
+ * The JSON shown in the app: one kind, and only that kind's columns, each row
+ * keyed by the column header exactly as the ticket prints it.
+ */
+export function toPublicJson(result: OcrResult): {
+  kind: ReceiptKind
+  headers: string[]
+  rows: Record<string, string>[]
+} {
+  const { headers } = result
+  return {
+    kind: result.kind,
+    headers,
+    rows: rowCells(result).map((cells) =>
+      Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ''])),
+    ),
+  }
 }

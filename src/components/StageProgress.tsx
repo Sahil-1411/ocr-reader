@@ -1,22 +1,9 @@
-import { STAGE_NAMES, type StageName } from '../ocr/types'
+import { STAGE_NAMES } from '../ocr/types'
 import type { StageMap } from '../lib/stage-state'
 
-export interface StageProgressProps {
+interface StageProgressProps {
   stages: StageMap
   running: boolean
-}
-
-const LABELS: Record<StageName, string> = {
-  init: 'init',
-  decode: 'decode',
-  perspective: 'perspective',
-  deskew: 'deskew',
-  watermark: 'watermark',
-  binarize: 'binarize',
-  detect: 'detect',
-  recognize: 'recognize',
-  cluster: 'cluster',
-  assemble: 'assemble',
 }
 
 export function StageProgress({ stages, running }: StageProgressProps) {
@@ -48,9 +35,9 @@ export function StageProgress({ stages, running }: StageProgressProps) {
             <span
               key={stage}
               className={`stage-chip stage-chip--${status}`}
-              title={state?.message ?? LABELS[stage]}
+              title={state?.message ?? stage}
             >
-              {LABELS[stage]}
+              {stage}
               {state?.elapsedMs !== undefined && (
                 <span className="stage-chip__ms">{Math.round(state.elapsedMs)}ms</span>
               )}
@@ -63,7 +50,7 @@ export function StageProgress({ stages, running }: StageProgressProps) {
         .filter(([, s]) => s?.status === 'skip' && s.message)
         .map(([stage, s]) => (
           <p key={stage} className="dropzone__hint" style={{ textAlign: 'left' }}>
-            <strong>{LABELS[stage as StageName]}</strong> skipped — {s!.message}
+            <strong>{stage}</strong> skipped — {s!.message}
           </p>
         ))}
     </div>

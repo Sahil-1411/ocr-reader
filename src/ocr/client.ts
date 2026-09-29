@@ -1,27 +1,30 @@
 /**
- * Reads one receipt on the main thread.
+ * Reads one receipt on the main thread: words from the Python reader (or
+ * Tesseract when it is not running), then rows from `receipt/assemble.ts`.
  *
- * The coloured lottery stamp is painted out in plain pixels first. OpenCV's
- * watermark pass is not on this path: its runtime can fail to settle, and a
- * run that waits for it leaves the spinner up with no result.
+ * On the Tesseract path the coloured lottery stamp is painted out in plain
+ * pixels first; the Python reader does that itself.
  */
 
 import type { WordBox } from './layout/rows'
-import { DEFAULT_MODEL_BUNDLE } from './models/registry'
-import type { PaddleReader } from './onnx/reader'
+import {
+  DEFAULT_PYTHON_READER_URL,
+  pythonReaderHealthy,
+  PythonReaderUnavailableError,
+  readWithPython,
+} from './python/reader'
 import { assembleReceipt } from './receipt/assemble'
 import { isWatermarkWord, suppressColoredWatermark } from './receipt/color-watermark'
 import { loadRecognizer, recognizeWords, terminateRecognizer } from './tesseract/engine'
-import { DEFAULT_OPTIONS, type DebugImage, type OcrOptions, type OcrResult, type ProgressEvent } from './types'
+import { DEFAULT_OPTIONS, type OcrOptions, type OcrResult, type ProgressEvent } from './types'
 
-export interface RunCallbacks {
+interface RunCallbacks {
   onProgress?: (event: ProgressEvent) => void
-  onDebugImage?: (image: DebugImage) => void
 }
 
-export interface OcrClientEvents {
-  /** Fired once the English reader is loaded. */
-  onReady?: (executionProvider: string) => void
+interface OcrClientEvents {
+  /** Fired once a reader is loaded, with its name. */
+  onReady?: (reader: string) => void
   /** Fired for failures that are not tied to a specific run. */
   onFatal?: (error: Error) => void
 }
@@ -42,28 +45,15 @@ export class OcrClient {
   #options: OcrOptions
   #disposed = false
   #runToken = 0
-  /** Held only while `options.reader` is `paddle`; null on the Tesseract path. */
-  #paddle: PaddleReader | null = null
+  #pythonUrl = DEFAULT_PYTHON_READER_URL
+  /** What the Python reader reported it painted out, for `processingMeta`. */
+  #pythonRatio = 0
+  /** False once `ready()` has found the Python reader absent and fallen back. */
+  #pythonAvailable = false
 
   constructor(options: Partial<OcrOptions> = {}, events: OcrClientEvents = {}) {
-    this.#options = mergeOptions(options)
+    this.#options = { ...DEFAULT_OPTIONS, ...options }
     this.#events = events
-  }
-
-  get options(): OcrOptions {
-    return this.#options
-  }
-
-  setOptions(options: Partial<OcrOptions>): void {
-    const previous = this.#options.reader
-    this.#options = mergeOptions(options, this.#options)
-    // Switching readers invalidates whatever was loaded, so drop it and let the
-    // next `ready()` build the other one.
-    if (this.#options.reader !== previous) {
-      this.#readyPromise = null
-      this.#paddle?.dispose()
-      this.#paddle = null
-    }
   }
 
   /**
@@ -74,8 +64,7 @@ export class OcrClient {
     if (this.#disposed) return Promise.reject(new Error('OcrClient has been disposed'))
     if (this.#readyPromise) return this.#readyPromise
 
-    const loading =
-      this.#options.reader === 'paddle' ? this.#loadPaddle() : this.#loadTesseract()
+    const loading = this.#options.reader === 'python' ? this.#checkPython() : this.#loadTesseract()
 
     this.#readyPromise = loading
       .then((name) => {
@@ -95,37 +84,43 @@ export class OcrClient {
   }
 
   /**
-   * Stand up PP-OCR, falling back to Tesseract if the weights cannot be had.
+   * Confirm the Python reader is up before any image is read.
    *
-   * The download is the part that fails in the real world — offline, a blocked
-   * host, a proxy that returns HTML. None of those should leave the user with no
-   * reader at all when a working one ships with the app.
+   * Checked here rather than on the first read so a server that was never
+   * started is reported before the user picks a file and watches it fail.
    */
-  async #loadPaddle(): Promise<string> {
-    try {
-      const { createPaddleReader } = await import('./onnx/reader')
-      this.#paddle = await createPaddleReader(DEFAULT_MODEL_BUNDLE, this.#options)
-      return `paddle (${this.#paddle.executionProvider})`
-    } catch (error) {
-      this.#paddle = null
-      const message = error instanceof Error ? error.message : String(error)
-      this.#events.onFatal?.(
-        new Error(`PP-OCR could not be loaded (${message}); reading with Tesseract instead.`),
-      )
-      await this.#loadTesseract()
-      return 'tesseract (PP-OCR unavailable)'
+  async #checkPython(): Promise<string> {
+    if (await pythonReaderHealthy(this.#pythonUrl)) {
+      this.#pythonAvailable = true
+      return `python (${this.#pythonUrl})`
     }
+    this.#pythonAvailable = false
+
+    // Fall back rather than refuse to read at all — but say so loudly and name
+    // it in the returned reader, because the two readers do not produce the
+    // same answer and a silent downgrade would be indistinguishable from the
+    // Python reader having been used.
+    this.#events.onFatal?.(
+      new PythonReaderUnavailableError(this.#pythonUrl, 'no response to /health'),
+    )
+    await this.#loadTesseract()
+    return 'tesseract (Python reader not running)'
+  }
+
+  get #usingPython(): boolean {
+    return this.#options.reader === 'python' && this.#pythonAvailable
   }
 
   /** The cleaned page in, words out — whichever reader is loaded. */
   async #readWords(image: ImageData, cleaned: Uint8ClampedArray, signal?: AbortSignal): Promise<WordBox[]> {
-    if (this.#paddle) {
-      return this.#paddle.recognizeWords(
-        new ImageData(new Uint8ClampedArray(cleaned), image.width, image.height),
-      )
+    if (this.#usingPython) {
+      // The original image, not `cleaned`: the server suppresses the watermark
+      // itself, and its word boxes then address the pixels it was given.
+      const result = await readWithPython(image, this.#pythonUrl, signal)
+      this.#pythonRatio = result.watermarkPixelRatio
+      return result.words
     }
-    // Tesseract resolves small print better on an enlarged page; PP-OCR does its
-    // own resizing from the detector's `limitSideLen`, so it takes the original.
+    // Tesseract resolves small print better on an enlarged page.
     const scale = 2
     const read = await recognizeWords(
       scaledCanvas(canvasFromPixels(image.width, image.height, cleaned), scale),
@@ -155,18 +150,26 @@ export class OcrClient {
 
     try {
       callbacks.onProgress?.({ stage: 'init', status: 'start', message: 'loading the reader…' })
-      await this.ready()
+      const reader = await this.ready()
       this.#throwIfStale(token, signal)
       callbacks.onProgress?.({ stage: 'init', status: 'done', message: 'reader ready' })
 
+      // The Python reader runs its own port of this pass, so cleaning here too
+      // would put every stroke through the ink ramp twice.
+      const suppressHere = !this.#usingPython
+
       const watermarkStarted = now()
       callbacks.onProgress?.({ stage: 'watermark', status: 'start', message: 'removing the watermark…' })
-      const cleaned = suppressColoredWatermark(image.width, image.height, image.data)
+      const cleaned = suppressHere
+        ? suppressColoredWatermark(image.width, image.height, image.data)
+        : { data: image.data, ratio: 0 }
       const watermarkMs = now() - watermarkStarted
       callbacks.onProgress?.({
         stage: 'watermark',
-        status: 'done',
-        message: `${Math.round(cleaned.ratio * 1000) / 10}% of the page`,
+        status: suppressHere ? 'done' : 'skip',
+        message: suppressHere
+          ? `${Math.round(cleaned.ratio * 1000) / 10}% of the page`
+          : 'the Python reader does this itself',
         elapsedMs: watermarkMs,
       })
 
@@ -186,30 +189,17 @@ export class OcrClient {
 
       const assembleStarted = now()
       callbacks.onProgress?.({ stage: 'assemble', status: 'start', message: 'building rows…' })
+      const watermarkPixelRatio = suppressHere ? cleaned.ratio : this.#pythonRatio
       const result = assembleReceipt(
         words,
         {
-          tiltCorrected: false,
-          perspectiveCorrected: false,
-          watermarkSuppressed: cleaned.ratio > 0.005,
-          rotationAngleDeg: 0,
-          documentQuad: null,
+          reader,
+          watermarkSuppressed: watermarkPixelRatio > 0.005,
+          watermarkPixelRatio,
           sourceSize: { width: image.width, height: image.height },
-          rectifiedSize: { width: image.width, height: image.height },
-          watermarkPixelRatio: cleaned.ratio,
-          ...(this.#paddle
-            ? {
-                detectorModel: this.#paddle.detectorName,
-                recognizerModel: this.#paddle.recognizerName,
-                detectorBackend: 'onnx' as const,
-                executionProvider: this.#paddle.executionProvider,
-              }
-            : {}),
-          warnings: [],
           timingsMs: { watermark: watermarkMs, recognize: recognizeMs },
         },
-        this.#options.cluster.rowOverlapRatio,
-        0,
+        this.#options.rowOverlapRatio,
       )
       const assembleMs = now() - assembleStarted
       result.processingMeta.timingsMs.assemble = assembleMs
@@ -245,8 +235,6 @@ export class OcrClient {
     this.#disposed = true
     this.#runToken += 1
     this.#readyPromise = null
-    this.#paddle?.dispose()
-    this.#paddle = null
     void terminateRecognizer()
   }
 }
@@ -284,21 +272,4 @@ function scaleWords(words: readonly WordBox[], scale: number): WordBox[] {
     width: word.width / scale,
     height: word.height / scale,
   }))
-}
-
-/** Deep-merge partial options over a base, one level into each section. */
-export function mergeOptions(
-  partial: Partial<OcrOptions>,
-  base: OcrOptions = DEFAULT_OPTIONS,
-): OcrOptions {
-  return {
-    ...base,
-    ...partial,
-    perspective: { ...base.perspective, ...partial.perspective },
-    deskew: { ...base.deskew, ...partial.deskew },
-    watermark: { ...base.watermark, ...partial.watermark },
-    detector: { ...base.detector, ...partial.detector },
-    recognizer: { ...base.recognizer, ...partial.recognizer },
-    cluster: { ...base.cluster, ...partial.cluster },
-  }
 }

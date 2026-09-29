@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { validateInventory, validateInvoice, validateSettlements } from './validate'
+import {
+  solveInventoryCounts,
+  validateInventory,
+  validateInvoice,
+  validateSettlements,
+} from './validate'
 import type { InventoryRow, ReceiptField, SettlementRow } from '../types'
 
 function inv(
@@ -50,6 +55,51 @@ describe('validateInventory', () => {
 
   it('stays quiet when the page has no TOTALS row to check against', () => {
     expect(validateInventory([inv('882', '003', '000', '000', '000')])).toEqual([])
+  })
+})
+
+describe('solveInventoryCounts', () => {
+  it('fills the one missing count in a column from TOTALS and says so', () => {
+    const { rows, issues } = solveInventoryCounts([
+      inv('882', '003', '000', '000', '000'),
+      inv('883', '', '001', '000', '001'),
+      inv('', '010', '001', '000', '001', 'TOTALS'),
+    ])
+    expect(rows[1]?.int).toBe('007')
+    expect(issues.map((issue) => issue.code)).toEqual(['inventory-solved'])
+    expect(issues[0]?.rows).toEqual([1])
+    expect(validateInventory(rows)).toEqual([])
+  })
+
+  it('replaces a count that did not parse', () => {
+    const { rows } = solveInventoryCounts([
+      inv('882', '003', '000', '000', '000'),
+      inv('883', '00S', '000', '000', '001'),
+      inv('', '006', '000', '000', '001', 'TOTALS'),
+    ])
+    expect(rows[1]?.int).toBe('003')
+  })
+
+  it('leaves two missing counts in one column empty and flags both rows', () => {
+    const { rows, issues } = solveInventoryCounts([
+      inv('882', '', '000', '000', '000'),
+      inv('883', '', '000', '000', '001'),
+      inv('', '006', '000', '000', '001', 'TOTALS'),
+    ])
+    expect(rows[0]?.int).toBe('')
+    expect(rows[1]?.int).toBe('')
+    expect(issues.map((issue) => issue.code)).toEqual(['inventory-unread'])
+    expect(issues[0]?.rows).toEqual([0, 1])
+  })
+
+  it('never invents a count that would take the column past TOTALS', () => {
+    const { rows, issues } = solveInventoryCounts([
+      inv('882', '009', '000', '000', '000'),
+      inv('883', '', '000', '000', '001'),
+      inv('', '006', '000', '000', '001', 'TOTALS'),
+    ])
+    expect(rows[1]?.int).toBe('')
+    expect(issues.map((issue) => issue.code)).toEqual(['inventory-unread'])
   })
 })
 

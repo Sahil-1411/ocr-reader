@@ -186,10 +186,6 @@ button {
   padding: 16px;
 }
 
-.card__body--flush {
-  padding: 0;
-}
-
 /* --------------------------------------------------------------------------
    Buttons
    -------------------------------------------------------------------------- */
@@ -358,22 +354,8 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   Debug image strip
+   Result
    -------------------------------------------------------------------------- */
-
-.strip {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
-  padding: 16px;
-}
-
-.strip__item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
 
 .strip__canvas {
   width: 100%;
@@ -395,59 +377,6 @@ button {
   white-space: nowrap;
 }
 
-/* --------------------------------------------------------------------------
-   Columns output
-   -------------------------------------------------------------------------- */
-
-.columns {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-  gap: 12px;
-}
-
-.column {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  min-width: 0;
-}
-
-.column__head {
-  padding: 6px 10px;
-  background: var(--bg-sunken);
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  display: flex;
-  justify-content: space-between;
-}
-
-.column__list {
-  margin: 0;
-  padding: 6px;
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.column__item {
-  padding: 3px 9px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
-  font-family: var(--mono);
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-}
-
-.column__item--low {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
 .column__empty {
   padding: 10px;
   color: var(--text-faint);
@@ -467,7 +396,6 @@ button {
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.05em;
-  text-transform: uppercase;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
@@ -490,134 +418,13 @@ button {
   color: var(--warn);
 }
 
-/* --------------------------------------------------------------------------
-   JSON output
-   -------------------------------------------------------------------------- */
-
-.json {
-  margin: 0;
-  padding: 14px 16px;
-  max-height: 460px;
-  overflow: auto;
-  background: var(--bg-sunken);
-  font-family: var(--mono);
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre;
-  tab-size: 2;
+.fields__row--flagged td {
+  background: var(--err-soft);
+  color: var(--err);
 }
 
-/* --------------------------------------------------------------------------
-   Meta table
-   -------------------------------------------------------------------------- */
-
-.meta {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 5px 14px;
-  font-size: 12.5px;
-}
-
-.meta__key {
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-.meta__val {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  overflow-wrap: anywhere;
-}
-
-.flag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 7px;
-  border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.flag--on {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.flag--off {
-  background: var(--bg-sunken);
-  color: var(--text-faint);
-}
-
-/* --------------------------------------------------------------------------
-   Settings
-   -------------------------------------------------------------------------- */
-
-.settings {
-  display: grid;
-  gap: 14px;
-}
-
-@media (min-width: 560px) {
-  .settings {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.field__label {
-  font-size: 12px;
-  color: var(--text-muted);
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.field__value {
-  font-family: var(--mono);
-  font-size: 11.5px;
-  color: var(--text-faint);
-  font-variant-numeric: tabular-nums;
-}
-
-.field input[type='range'] {
-  width: 100%;
-  accent-color: var(--accent);
-}
-
-.field select {
-  width: 100%;
-  padding: 7px 9px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--text);
-  font: inherit;
-  font-size: 13.5px;
-}
-
-.toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13.5px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--accent);
-  cursor: pointer;
+.fields__issues {
+  margin-bottom: 12px;
 }
 
 /* --------------------------------------------------------------------------
@@ -643,25 +450,9 @@ button {
   color: var(--warn);
 }
 
-.banner--ok {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
 .banner__list {
   margin: 4px 0 0;
   padding-left: 18px;
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
 }
 
 .spinner {

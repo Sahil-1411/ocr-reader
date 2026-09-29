@@ -1,6 +1,6 @@
 import { useCallback, useId, useRef, useState } from 'react'
 
-export interface DropzoneProps {
+interface DropzoneProps {
   onFile: (file: File) => void
   disabled?: boolean
   /** Rendered under the button — a hint about what to drop. */

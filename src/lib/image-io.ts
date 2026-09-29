@@ -17,7 +17,7 @@
  *      silently hand back a blank bitmap. Everything is capped on the way in.
  */
 
-export interface LoadedImage {
+interface LoadedImage {
   imageData: ImageData
   /** Size actually used, after the cap. */
   width: number
@@ -46,7 +46,7 @@ function get2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
 }
 
 /** Fit `w × h` inside a `maxSize` square, never scaling up. */
-export function fitWithin(
+function fitWithin(
   w: number,
   h: number,
   maxSize: number,
@@ -149,18 +149,7 @@ export function drawImageDataTo(
   canvas.height = image.height
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  // Re-wrap rather than assuming we were handed a real ImageData: the worker
-  // sends plain transferable buffers, which structured-clone does not revive
-  // into ImageData on every engine. `createImageData` also sidesteps the
-  // ArrayBuffer/SharedArrayBuffer typing split under cross-origin isolation.
   const target = ctx.createImageData(image.width, image.height)
   target.data.set(image.data)
   ctx.putImageData(target, 0, 0)
-}
-
-/** Render `ImageData` to a canvas and return it, for thumbnails and downloads. */
-export function imageDataToCanvas(image: ImageData): HTMLCanvasElement {
-  const canvas = makeCanvas(image.width, image.height)
-  get2d(canvas).putImageData(image, 0, 0)
-  return canvas
 }

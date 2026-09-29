@@ -63,7 +63,7 @@ const INK_SHARE = 0.04
  */
 const OVERLAY_DOMINANCE = 80
 
-export interface SuppressedRaster {
+interface SuppressedRaster {
   data: Uint8ClampedArray
   /** Fraction of pixels painted out, in [0, 1]. */
   ratio: number

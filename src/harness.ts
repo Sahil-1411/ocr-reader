@@ -42,26 +42,22 @@ function report(name: string, body: string): void {
   outEl.append(heading, pre)
 }
 
-/** Compact view: the label/value rows plus just enough meta to judge the run. */
+/** Compact view: the public JSON plus just enough meta to judge the run. */
 function summarise(result: OcrResult) {
   const m = result.processingMeta
   return {
     ...toPublicJson(result),
+    validation: result.validation.map((issue) => issue.message),
     processingMeta: {
-      tiltCorrected: m.tiltCorrected,
-      perspectiveCorrected: m.perspectiveCorrected,
+      reader: m.reader,
       watermarkSuppressed: m.watermarkSuppressed,
-      rotationAngleDeg: Number(m.rotationAngleDeg.toFixed(2)),
-      sourceSize: m.sourceSize,
-      rectifiedSize: m.rectifiedSize,
       watermarkPixelRatio: Number(m.watermarkPixelRatio.toFixed(4)),
-      detectorBackend: m.detectorBackend,
-      executionProvider: m.executionProvider,
+      sourceSize: m.sourceSize,
+      words: m.wordCount,
       totalMs: Math.round(m.totalMs),
       timingsMs: Object.fromEntries(
         Object.entries(m.timingsMs).map(([k, v]) => [k, Math.round(v ?? 0)]),
       ),
-      words: result.rawDetections.length,
       warnings: m.warnings,
     },
   }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  fieldsFromWords,
+  findInventoryHeader,
   groupIntoLines,
   inventoryRowsFromWords,
   invoiceRowsFromWords,
+  repairGameName,
   settlementRowsFromWords,
   splitLabelValue,
   type WordBox,
@@ -241,6 +242,151 @@ describe('inventoryRowsFromWords', () => {
   })
 })
 
+describe('inventoryRowsFromWords against the printed header', () => {
+  const COLUMNS = [420, 470, 520, 570]
+
+  /** The header line plus three clean rows, so the count columns are known. */
+  function sheet(...extra: WordBox[]): WordBox[] {
+    const clean = (game: string, name: string, y: number) => [
+      word(game, 20, y, { width: 30 }),
+      word(name, 60, y),
+      ...COLUMNS.map((x) => word('000', x, y, { width: 30 })),
+    ]
+    return [
+      word('Game', 20, 100),
+      word('Name', 60, 100),
+      word('Int', 420, 100, { width: 30 }),
+      word('Rec', 470, 100, { width: 30 }),
+      word('Act', 520, 100, { width: 30 }),
+      word('Set', 570, 100, { width: 30 }),
+      ...clean('801', 'ALPHA', 140),
+      ...clean('802', 'BRAVO', 180),
+      ...clean('803', 'CHARLIE', 220),
+      ...extra,
+    ]
+  }
+
+  const counts = (rows: ReturnType<typeof inventoryRowsFromWords>) =>
+    rows.map(({ game, name, int, rec, act, set }) => ({ game, name, int, rec, act, set }))
+
+  it('finds the header labels as printed', () => {
+    const header = findInventoryHeader(sheet())
+    expect(header?.labels).toEqual(['Game', 'Name', 'Int', 'Rec', 'Act', 'Set'])
+  })
+
+  it('splits a hyphenated blob of three counts across their columns', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('868', 20, 260, { width: 30 }),
+        word('LUCKY', 60, 260),
+        word('005000-000', 420, 260, { width: 130 }),
+        word('001', 570, 260, { width: 30 }),
+      ),
+    )
+    expect(counts(rows).at(-1)).toEqual({
+      game: '868',
+      name: 'LUCKY',
+      int: '005',
+      rec: '000',
+      act: '000',
+      set: '001',
+    })
+  })
+
+  it('splits twelve digits read as one blob plus a stray into four counts', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('870', 20, 260, { width: 30 }),
+        word('BINGO', 60, 260),
+        word('000-00500000', 420, 260, { width: 160 }),
+        word('1', 590, 260, { width: 10 }),
+      ),
+    )
+    expect(counts(rows).at(-1)).toMatchObject({ game: '870', int: '000', rec: '005', act: '000', set: '001' })
+  })
+
+  it('bins a count to its header column even when a neighbour is missing', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('871', 20, 260, { width: 30 }),
+        word('DELTA', 60, 260),
+        word('002', 470, 260, { width: 30 }),
+        word('004', 570, 260, { width: 30 }),
+      ),
+    )
+    expect(counts(rows).at(-1)).toMatchObject({ game: '871', int: '', rec: '002', act: '', set: '004' })
+  })
+
+  it('keeps a game whose counts were not read at all', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(word('872', 20, 260, { width: 30 }), word('ECHO', 60, 260)),
+    )
+    expect(counts(rows).at(-1)).toEqual({ game: '872', name: 'ECHO', int: '', rec: '', act: '', set: '' })
+  })
+
+  it('drops a margin fragment printed before the game number', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('SHIP', -40, 260, { width: 40 }),
+        word('863', 20, 260, { width: 30 }),
+        word('FOXTROT', 60, 260),
+        ...COLUMNS.map((x) => word('001', x, 260, { width: 30 })),
+      ),
+    )
+    expect(counts(rows).at(-1)).toEqual({
+      game: '863',
+      name: 'FOXTROT',
+      int: '001',
+      rec: '001',
+      act: '001',
+      set: '001',
+    })
+  })
+
+  it('reads a number in the name column as part of the name, not a game', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('873', 20, 260, { width: 30 }),
+        word('777', 60, 260, { width: 30 }),
+        word('GOLF', 100, 260),
+        ...COLUMNS.map((x) => word('000', x, 260, { width: 30 })),
+      ),
+    )
+    expect(rows.map((row) => row.game)).toEqual(['801', '802', '803', '873'])
+    expect(rows.at(-1)?.name).toBe('777 GOLF')
+  })
+
+  it('ends at TOTALS and ignores numbers printed below it', () => {
+    const rows = inventoryRowsFromWords(
+      sheet(
+        word('TOTALS', 20, 260, { width: 60 }),
+        ...COLUMNS.map((x) => word('000', x, 260, { width: 30 })),
+        word('401', 20, 320, { width: 30 }),
+        word('Retailer', 60, 320),
+      ),
+    )
+    expect(rows.map((row) => row.game || row.name)).toEqual(['801', '802', '803', 'TOTALS'])
+  })
+})
+
+describe('repairGameName', () => {
+  it('restores a dollar sign read as S before a price', () => {
+    expect(repairGameName('S50 OR S100! 2026 EDITION')).toBe('$50 OR $100! 2026 EDITION')
+  })
+
+  it('restores thousands commas read as dots', () => {
+    expect(repairGameName('$1.000.000 JACKPOT')).toBe('$1,000,000 JACKPOT')
+  })
+
+  it('reads an O inside a price as a zero', () => {
+    expect(repairGameName('$2O0,000 PLATINUM')).toBe('$200,000 PLATINUM')
+  })
+
+  it('leaves words that merely start with S alone', () => {
+    expect(repairGameName('SUPER 7S')).toBe('SUPER 7S')
+  })
+})
+
 describe('settlementRowsFromWords', () => {
   it('reads a game-pack, a name, and the date settled', () => {
     const rows = settlementRowsFromWords([
@@ -274,6 +420,29 @@ describe('settlementRowsFromWords', () => {
     expect(rows.map(({ gamePack, name, dateSettled }) => ({ gamePack, name, dateSettled }))).toEqual([
       { gamePack: '881-023234', name: 'DIAMONDS & GOLD', dateSettled: '02/23/26' },
     ])
+  })
+
+  it('keeps a single-letter word inside the name', () => {
+    const rows = settlementRowsFromWords([
+      word('869-004512', 20, 80, { width: 110 }),
+      word('100X', 140, 80, { width: 40 }),
+      word('X', 192, 80, { width: 12 }),
+      word('THE', 216, 80, { width: 30 }),
+      word('CASH', 258, 80),
+      word('02/23/26', 460, 84, { width: 70 }),
+    ])
+    expect(rows[0]?.name).toBe('100X X THE CASH')
+  })
+
+  it('drops a stray mark stranded between the name and the date', () => {
+    const rows = settlementRowsFromWords([
+      word('862-021236', 20, 80, { width: 110 }),
+      word('$1,000', 140, 80, { width: 60 }),
+      word('MAYHEM', 210, 80),
+      word('1', 380, 80, { width: 8 }),
+      word('02/23/26', 460, 84, { width: 70 }),
+    ])
+    expect(rows[0]?.name).toBe('$1,000 MAYHEM')
   })
 })
 
@@ -433,23 +602,5 @@ describe('invoiceRowsFromWords', () => {
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
       { label: 'LIT Cashes', value: '4,577.00C' },
     ])
-  })
-})
-
-describe('fieldsFromWords', () => {
-  it('returns label/value rows in top-to-bottom order', () => {
-    const fields = fieldsFromWords([
-      word('SYSTEM', 20, 160),
-      word('FEE', 90, 160),
-      word('8.00', 400, 160, { width: 40 }),
-      word('FWD', 20, 100),
-      word('BALANCE', 70, 100),
-      word('0.00', 400, 102, { width: 40 }),
-    ])
-    expect(fields.map(({ label, value }) => ({ label, value }))).toEqual([
-      { label: 'FWD BALANCE', value: '0.00' },
-      { label: 'SYSTEM FEE', value: '8.00' },
-    ])
-    expect(fields[0]?.confidence).toBeCloseTo(0.9)
   })
 })

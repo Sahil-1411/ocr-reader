@@ -320,7 +320,7 @@ export function groupIntoLines(
  * that is the name. A `TOTALS` line has no game number.
  * Returns null for headings and for lines that are not this table.
  */
-export function inventoryRowFromLine(words: readonly WordBox[]): InventoryRow | null {
+function inventoryRowFromLine(words: readonly WordBox[]): InventoryRow | null {
   const ordered = [...words].sort((a, b) => a.x - b.x || a.y - b.y)
   const counts = tightCountRun(ordered)
   if (!counts) return null
@@ -330,8 +330,14 @@ export function inventoryRowFromLine(words: readonly WordBox[]): InventoryRow | 
   const labelWords = ordered.filter(
     (word) => !countWords.has(word) && firstCount && word.x < firstCount.x,
   )
-  let start = 0
-  while (start < labelWords.length) {
+  // A margin fragment of any length can precede the game number (`SHIP`,
+  // `kansas`); when the number is there, the row starts at it.
+  const numbered = labelWords.findIndex((word) => {
+    const token = stripEdges(word.text)
+    return GAME.test(token) || isTotals(token)
+  })
+  let start = numbered === -1 ? 0 : numbered
+  while (numbered === -1 && start < labelWords.length) {
     const token = stripEdges(labelWords[start]?.text ?? '')
     if (GAME.test(token) || isTotals(token)) break
     // Three, not two: the margin watermark yields `|SE` and `|€2` as often as
@@ -348,7 +354,7 @@ export function inventoryRowFromLine(words: readonly WordBox[]): InventoryRow | 
 
   const first = stripEdges(body[0]?.text ?? '')
   const game = GAME.test(first) ? first : ''
-  const name = joinParts(game ? body.slice(1) : body)
+  const name = repairGameName(joinParts(game ? body.slice(1) : body))
   if (!game && !isTotals(name)) return null
 
   const [int = '', rec = '', act = '', set = ''] = counts.map(
@@ -388,12 +394,14 @@ function isTotals(token: string): boolean {
  * token whose digits divide into threes is expanded back out and spaced across
  * the box it came from. A comma is deliberately not a separator here — that is
  * how money is written, and `350,000` in a game's name must not become counts.
+ * A hyphen is: PP-OCR reads the gap as one (`005000-000`), and a pack code, the
+ * only hyphenated number these sheets print, is excluded by its shape.
  */
 function expandMergedCounts(words: readonly WordBox[]): WordBox[] {
   const expanded: WordBox[] = []
   for (const word of words) {
     const token = tokenCore(word.text)
-    if (isCount(token) || !/^\d{3}(?:[.\s]?\d{3})+$/.test(token)) {
+    if (isCount(token) || PACK.test(token) || !/^\d{3}(?:[.\s-]?\d{3})+$/.test(token)) {
       expanded.push(word)
       continue
     }
@@ -448,6 +456,266 @@ function rowPitch(anchors: readonly WordBox[]): number {
 }
 
 /**
+ * A dollar figure inside a game name, repaired to how the ticket prints it.
+ *
+ * The reader's slips on these are consistent and never plausible as print: a
+ * thousands comma comes back as a point (`$200.000` — a price is never quoted
+ * to the thousandth of a dollar), `$` as `S` in front of a figure (`NEON S100`),
+ * and a zero as a letter O in the middle of one (`$1.00O.000`). Only tokens
+ * that are wholly a dollar figure are touched, so `5S` and `X10` are left as read.
+ */
+function repairMoneyToken(token: string): string {
+  let text = token
+  if (/^S(?:\d{3,}|\d{1,3}[.,]\d{3})/.test(text) && /^S[\dOo.,]+!?$/.test(text)) text = `$${text.slice(1)}`
+  if (!text.startsWith('$')) return token
+  const bang = text.endsWith('!') ? '!' : ''
+  let body = text.slice(1, bang ? -1 : undefined)
+  if (!/^\d[\dOo.,]*$/.test(body)) return token
+  body = body.replace(/[Oo]/g, '0')
+  const grouped = /^(\d{1,3})((?:[.,]\d{3})+)$/.exec(body)
+  if (grouped) body = `${grouped[1]}${grouped[2]!.replace(/[.,]/g, ',')}`
+  else if (!/^\d+(?:\.\d{2})?$/.test(body)) return token
+  return `$${body}${bang}`
+}
+
+/**
+ * A game name with its dollar figures repaired, word by word. A short `S50` is
+ * only read as `$50` when the name already prices something in dollars.
+ */
+export function repairGameName(name: string): string {
+  const tokens = name.split(' ').map((token) => repairMoneyToken(token))
+  if (!tokens.some((token) => token.startsWith('$'))) return tokens.join(' ')
+  return tokens.map((token) => (/^S\d{1,2}!?$/.test(token) ? `$${token.slice(1)}` : token)).join(' ')
+}
+
+/** The inventory table's printed header, left to right. */
+export const INVENTORY_HEADERS = ['Game', 'Name', 'Int', 'Rec', 'Act', 'Set'] as const
+const COUNT_HEADERS = INVENTORY_HEADERS.slice(2)
+
+interface InventoryHeader {
+  /** The header as printed, falling back to {@link INVENTORY_HEADERS} for a misread label. */
+  labels: string[]
+  /** The header's own words, which are not table content. */
+  words: Set<WordBox>
+  top: number
+  bottom: number
+  /** Horizontal centres of the Int, Rec, Act and Set labels. */
+  countCenters: number[]
+}
+
+/** Within one letter of `target`: a short label misread by a glyph is still the label. */
+function looksLike(token: string, target: string): boolean {
+  const a = token.toLowerCase()
+  const b = target.toLowerCase()
+  if (a.length !== b.length) return false
+  let diff = 0
+  for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) diff += 1
+  return diff <= 1
+}
+
+function printedLabel(word: WordBox | undefined, canonical: string): string {
+  const token = word ? stripEdges(word.text) : ''
+  return token.toLowerCase() === canonical.toLowerCase() ? token : canonical
+}
+
+/**
+ * The `Game Name Int Rec Act Set` line, when the reader saw it.
+ *
+ * It is the one place on the sheet that says where each count column is, so
+ * the rows are read against it rather than against whatever four numbers
+ * happen to sit closest together.
+ */
+export function findInventoryHeader(words: readonly WordBox[]): InventoryHeader | null {
+  const usable = words.filter(
+    (word) => word.text.trim().length > 0 && word.width > 0 && word.height > 0,
+  )
+  for (const line of groupIntoLines(usable, 0.5)) {
+    const counts: WordBox[] = []
+    let exact = 0
+    for (const word of line) {
+      const target = COUNT_HEADERS[counts.length]
+      if (!target) break
+      const token = stripEdges(word.text)
+      if (looksLike(token, target)) {
+        counts.push(word)
+        if (token.toLowerCase() === target.toLowerCase()) exact += 1
+      }
+    }
+    if (counts.length < 4 || exact < 2) continue
+
+    const firstCount = counts[0]!
+    const left = line.filter((word) => word.x < firstCount.x)
+    const game = left.find((word) => looksLike(stripEdges(word.text), 'Game'))
+    const name = left.find((word) => word !== game && looksLike(stripEdges(word.text), 'Name'))
+    const own = new Set([...counts, ...(game ? [game] : []), ...(name ? [name] : [])])
+    const band = lineBand([...own])
+    return {
+      labels: [
+        printedLabel(game, 'Game'),
+        printedLabel(name, 'Name'),
+        ...counts.map((word, index) => printedLabel(word, COUNT_HEADERS[index]!)),
+      ],
+      words: own,
+      top: band.top,
+      bottom: band.bottom,
+      countCenters: counts.map((word) => word.x + word.width / 2),
+    }
+  }
+  return null
+}
+
+interface CountLayout {
+  /** Where the Int, Rec, Act and Set values sit across the page. */
+  centers: number[]
+  /** Distance between neighbouring count columns. */
+  pitch: number
+}
+
+/**
+ * Where the four count columns actually are on this page.
+ *
+ * Measured off the rows whose counts read cleanly, because the header labels
+ * are proportionally placed inside one recognised box and run a few pixels
+ * off the values below them. The header is the fallback when too few rows
+ * read cleanly to take a median.
+ */
+function countLayout(
+  groups: readonly WordBox[][],
+  header: InventoryHeader | null,
+): CountLayout | null {
+  const slots: number[][] = [[], [], [], []]
+  for (const group of groups) {
+    const run = tightCountRun([...group].sort((a, b) => a.x - b.x || a.y - b.y))
+    if (!run) continue
+    run.forEach((word, index) => slots[index]?.push(word.x + word.width / 2))
+  }
+  let centers: number[] | null = null
+  if ((slots[0]?.length ?? 0) >= 3) centers = slots.map((values) => median(values))
+  else if (header) centers = header.countCenters
+  if (!centers) return null
+  const pitch = ((centers[3] ?? 0) - (centers[0] ?? 0)) / 3
+  return pitch > 0 ? { centers, pitch } : null
+}
+
+/**
+ * The digits in a count-column token.
+ *
+ * Only a token that is mostly digits gets the letter-for-digit repair, so a
+ * stray `i` from the watermark is dropped rather than turned into a `1`.
+ */
+function countDigits(text: string): string {
+  const token = text.trim()
+  const digits = token.replace(/\D/g, '').length
+  const alnum = token.replace(/[^0-9A-Za-z]/g, '').length
+  if (digits === 0 || digits * 2 < alnum) return ''
+  return token.replace(/[OoQD]/g, '0').replace(/[Il|]/g, '1').replace(/\D/g, '')
+}
+
+interface CountPiece {
+  text: string
+  center: number
+  /** A whole 1-2 digit token, which the sheet would have printed zero-padded. */
+  short: boolean
+}
+
+/**
+ * Int, Rec, Act and Set from the words that fall in the count columns.
+ *
+ * Every count is printed as exactly three digits, so twelve digits across the
+ * region are the four values whatever the reader did with the gaps between
+ * them: `000-00500000` followed by a stray `1` is `000 005 000 001`. Otherwise
+ * each three-digit group (or, in a mangled token, each digit) goes to the
+ * nearest column, and a column that does not come to three digits is left
+ * empty — a blank is flagged downstream, a guessed digit would not be.
+ */
+function readCounts(words: readonly WordBox[], layout: CountLayout): string[] {
+  const ordered = [...words].sort((a, b) => a.x - b.x || a.y - b.y)
+  const all = ordered.map((word) => countDigits(word.text)).join('')
+  if (all.length === 12) return [0, 3, 6, 9].map((start) => all.slice(start, start + 3))
+
+  const pieces: CountPiece[] = []
+  for (const word of ordered) {
+    const digits = countDigits(word.text)
+    if (!digits) continue
+    if (digits.length % 3 === 0) {
+      const parts = digits.length / 3
+      for (let index = 0; index < parts; index += 1) {
+        pieces.push({
+          text: digits.slice(index * 3, index * 3 + 3),
+          center: word.x + (word.width * (index + 0.5)) / parts,
+          short: false,
+        })
+      }
+    } else if (digits.length < 3 && /^\d+$/.test(tokenCore(word.text))) {
+      pieces.push({ text: digits, center: word.x + word.width / 2, short: true })
+    } else {
+      const text = word.text.trim()
+      for (let index = 0; index < text.length; index += 1) {
+        const ch = countDigits(text[index] ?? '')
+        if (!ch) continue
+        pieces.push({ text: ch, center: word.x + (word.width * (index + 0.5)) / text.length, short: false })
+      }
+    }
+  }
+
+  const columns: CountPiece[][] = [[], [], [], []]
+  for (const piece of pieces) {
+    let best = -1
+    let bestDistance = layout.pitch * 0.75
+    layout.centers.forEach((center, index) => {
+      const distance = Math.abs(piece.center - center)
+      if (distance <= bestDistance) {
+        best = index
+        bestDistance = distance
+      }
+    })
+    if (best >= 0) columns[best]?.push(piece)
+  }
+
+  return columns.map((column) => {
+    const text = column.map((piece) => piece.text).join('')
+    if (text.length === 3) return text
+    if (column.length === 1 && column[0]?.short) return text.padStart(3, '0')
+    return ''
+  })
+}
+
+/**
+ * One inventory row from the words grouped on its game number (or TOTALS).
+ *
+ * Always returns a row: a game printed on the sheet is in the report even when
+ * its counts could not be read, so the gap is visible rather than the game
+ * silently missing from the day's adjustment.
+ */
+function inventoryRowFromAnchor(group: readonly WordBox[], layout: CountLayout): InventoryRow {
+  const [anchor, ...rest] = group
+  const anchorText = stripEdges(anchor?.text ?? '')
+  const low = (layout.centers[0] ?? 0) - layout.pitch * 0.8
+  const high = (layout.centers[3] ?? 0) + layout.pitch * 0.8
+  const labelWords: WordBox[] = []
+  const countWords: WordBox[] = []
+  for (const word of rest) {
+    const center = word.x + word.width / 2
+    if (center >= low && center <= high) countWords.push(word)
+    // Left of the game number is the margin watermark, never the name.
+    else if (center < low && anchor && word.x >= anchor.x + anchor.width * 0.5) labelWords.push(word)
+  }
+  const totals = isTotals(anchorText)
+  const [int = '', rec = '', act = '', set = ''] = readCounts(countWords, layout)
+  return {
+    game: totals ? '' : anchorText,
+    name: totals
+      ? anchorText
+      : repairGameName(joinParts([...labelWords].sort((a, b) => a.x - b.x || a.y - b.y))),
+    int,
+    rec,
+    act,
+    set,
+    confidence: meanConfidence(group),
+  }
+}
+
+/**
  * Inventory rows only, top to bottom. Header and footer text are left out.
  *
  * Printed counts sit a little below the game name, and the diagonal watermark
@@ -458,8 +726,14 @@ export function inventoryRowsFromWords(
   words: readonly WordBox[],
   overlapRatio = 0.5,
 ): InventoryRow[] {
+  const header = findInventoryHeader(words)
   const usable = words.filter(
-    (word) => word.text.trim().length > 0 && word.width > 0 && word.height > 0,
+    (word) =>
+      word.text.trim().length > 0 &&
+      word.width > 0 &&
+      word.height > 0 &&
+      !header?.words.has(word) &&
+      (!header || word.y + word.height > header.top),
   )
   const right = usable.reduce((max, word) => Math.max(max, word.x + word.width), 0)
   // The game number is a column, so every real one shares a left edge. A game
@@ -479,12 +753,20 @@ export function inventoryRowsFromWords(
   const columnHeight = lineHeight(gameLike)
   const slackLeft = Math.max(48, columnHeight * 3)
   const slackRight = Math.max(16, columnHeight)
-  const anchors = usable.filter((word) => {
+  const candidates = usable.filter((word) => {
     if (isTotals(stripEdges(word.text))) return true
     if (!GAME.test(stripEdges(word.text)) || word.x > right * 0.45) return false
     const offset = word.x - columnX
     return offset >= -slackLeft && offset <= slackRight
   })
+  // TOTALS closes the table; a three-digit number in the footer is not a game.
+  const totalsY = candidates
+    .filter((word) => isTotals(stripEdges(word.text)))
+    .reduce((max, word) => Math.max(max, centerY(word)), Number.NEGATIVE_INFINITY)
+  const anchors =
+    totalsY === Number.NEGATIVE_INFINITY
+      ? candidates
+      : candidates.filter((word) => centerY(word) <= totalsY)
   if (anchors.length === 0) {
     const rows: InventoryRow[] = []
     for (const line of groupIntoLines(usable, overlapRatio)) {
@@ -494,8 +776,12 @@ export function inventoryRowsFromWords(
     return rows
   }
 
+  const groups = assignToAnchors(usable, anchors, overlapRatio, 0.35 + overlapRatio)
+  const layout = countLayout(groups, header)
+  if (layout) return groups.map((group) => inventoryRowFromAnchor(group, layout))
+
   const rows: InventoryRow[] = []
-  for (const line of assignToAnchors(usable, anchors, overlapRatio, 0.35 + overlapRatio)) {
+  for (const line of groups) {
     const row = inventoryRowFromLine(line)
     if (row) rows.push(row)
   }
@@ -604,6 +890,45 @@ function dropLeadingStrays(ordered: readonly WordBox[]): readonly WordBox[] {
   return kept
 }
 
+/**
+ * A single letter set at ordinary word spacing from a neighbour, like the `X`
+ * of `X THE CASH` or the `J` that ends `$200,000 PLATINUM J`.
+ *
+ * Single letters are usually watermark fragments and are dropped, but those sit
+ * apart from the label or on top of it. Once the reader restores the spaces a
+ * name was printed with, a real one-letter word is separated by exactly a space.
+ */
+function isSpacedWord(ordered: readonly WordBox[], index: number): boolean {
+  const word = ordered[index]
+  if (!word || !/^[A-Za-z]$/.test(word.text.trim())) return false
+  const limit = word.height * 1.2
+  const previous = ordered[index - 1]
+  const next = ordered[index + 1]
+  const near = (gap: number) => gap >= 0 && gap <= limit
+  return (previous !== undefined && near(gapBetween(previous, word))) ||
+    (next !== undefined && near(gapBetween(word, next)))
+}
+
+/**
+ * The mirror of `dropLeadingStrays` for the other end of a label.
+ *
+ * A mark in the gutter before the next column is read as a word of its own —
+ * the `1` sitting 62px after `$50 OR $100! 2026 E` and just before its settled
+ * date, where the name's own words are 8px apart.
+ */
+function dropTrailingStrays(ordered: readonly WordBox[]): readonly WordBox[] {
+  let kept = ordered
+  while (kept.length >= 2) {
+    const tail = kept[kept.length - 1]
+    const previous = kept[kept.length - 2]
+    if (!tail || !previous || tail.text.trim().length > 3) break
+    const height = Math.max(tail.height, previous.height)
+    if (gapBetween(previous, tail) <= height * 1.5) break
+    kept = kept.slice(0, -1)
+  }
+  return kept
+}
+
 function cleanLabel(words: readonly WordBox[]): string {
   // Tokens with nothing alphanumeric in them — a bare `|` off the margin rule —
   // are discarded further down anyway, but leaving them in first distorts the
@@ -612,16 +937,17 @@ function cleanLabel(words: readonly WordBox[]): string {
   const sorted = [...words]
     .filter((word) => /[A-Za-z0-9&$]/.test(word.text))
     .sort((a, b) => a.x - b.x || a.y - b.y)
-  const ordered = dropLeadingStrays(sorted)
+  const ordered = dropTrailingStrays(dropLeadingStrays(sorted))
   const xs = ordered.map((word) => word.x).sort((a, b) => a - b)
   const column = xs[Math.floor(xs.length / 2)] ?? 0
   const margin = column * 0.45
   const kept: string[] = []
-  for (const word of ordered) {
+  for (const [index, word] of ordered.entries()) {
     if (ordered.length >= 3 && word.x + word.width < margin) continue
-    const token = word.text.trim().replace(/^[^A-Za-z0-9&$/]+|[^A-Za-z0-9&$/]+$/g, '')
+    // `!` and `?` end printed names (`$50 OR $100!`, `DID I WIN?`), so they stay.
+    const token = word.text.trim().replace(/^[^A-Za-z0-9&$/]+|[^A-Za-z0-9&$/!?]+$/g, '')
     if (!token) continue
-    if (token.length === 1 && !/^[0-9&]$/.test(token)) continue
+    if (token.length === 1 && !/^[0-9&]$/.test(token) && !isSpacedWord(ordered, index)) continue
     if (!/[A-Za-z0-9&$]/.test(token)) continue
     kept.push(token)
   }
@@ -673,7 +999,9 @@ export function settlementRowsFromWords(
     if (!dateWord || !pack) continue
     const used = new Set(pack.used)
     used.add(dateWord)
-    const name = cleanLabel(ordered.filter((word) => !used.has(word) && word.x < dateWord.x))
+    const name = repairGameName(
+      cleanLabel(ordered.filter((word) => !used.has(word) && word.x < dateWord.x)),
+    )
     if (!name) continue
     rows.push({
       gamePack: pack.code,
@@ -824,27 +1152,12 @@ export function chooseReceiptKind(
   settlements: readonly SettlementRow[],
   invoice: readonly ReceiptField[],
 ): ReceiptKind {
-  const inventoryScore = inventory.length + (inventory.some((row) => isTotals(row.name)) ? 2 : 0)
+  // A row with no counts read proves nothing about which table this is.
+  const counted = inventory.filter((row) => row.int || row.rec || row.act || row.set)
+  const inventoryScore = counted.length + (counted.some((row) => isTotals(row.name)) ? 2 : 0)
   if (inventoryScore >= 3 && inventoryScore >= settlements.length) return 'inventory'
   if (settlements.length >= 3 && settlements.length >= invoice.length) return 'settlements'
   if (invoice.length > 0) return 'invoice'
   if (settlements.length > 0) return 'settlements'
   return 'inventory'
-}
-
-/** Word boxes in, receipt rows out, top to bottom. */
-export function fieldsFromWords(
-  words: readonly WordBox[],
-  overlapRatio = 0.5,
-): ReceiptField[] {
-  const usable = words.filter(
-    (word) => word.text.trim().length > 0 && word.width > 0 && word.height > 0,
-  )
-  const fields: ReceiptField[] = []
-  for (const line of groupIntoLines(usable, overlapRatio)) {
-    const { label, value } = splitLabelValue(line)
-    if (label.length === 0 && value.length === 0) continue
-    fields.push({ label, value, confidence: meanConfidence(line) })
-  }
-  return fields
 }

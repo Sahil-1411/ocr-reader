@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Dropzone } from './components/Dropzone'
-import { FieldsView, JsonView, MetaView } from './components/ResultView'
+import { FieldsView, JsonView } from './components/ResultView'
 import { StageProgress } from './components/StageProgress'
 import { reduceProgress, type StageMap } from './lib/stage-state'
 import { cloneImageData, drawImageDataTo, fileToImageData } from './lib/image-io'
@@ -172,15 +172,6 @@ export default function App() {
               </div>
 
               <JsonView result={result} />
-
-              <div className="card">
-                <div className="card__head">
-                  <h2 className="card__title">What the pipeline did</h2>
-                </div>
-                <div className="card__body">
-                  <MetaView result={result} />
-                </div>
-              </div>
             </>
           ) : (
             <div className="card">
@@ -189,9 +180,10 @@ export default function App() {
               </div>
               <div className="card__body">
                 <p className="dropzone__hint" style={{ textAlign: 'left' }}>
-                  The extracted JSON will appear here. An inventory summary uses game, name,
-                  int, rec, act, and set. A pack settlement uses game-pack, name, and date.
-                  An invoice uses a label and an amount.
+                  The extracted JSON will appear here, keyed by the ticket's own column
+                  headers. An inventory summary uses Game, Name, Int, Rec, Act, and Set, with
+                  one row for every printed game plus TOTALS. A pack settlement uses
+                  Game-Pack, Name, and Date Settled. An invoice uses a label and an amount.
                 </p>
               </div>
             </div>

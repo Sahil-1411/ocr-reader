@@ -12,9 +12,11 @@
  * somewhere — a totals row, a footer count, a section subtotal repeated in the
  * header — so a misread digit contradicts something else on the same page.
  *
- * Nothing here corrects a value. A failed check means one of the two sides is
- * wrong and the arithmetic cannot say which, so guessing would turn a visible
- * error into an invisible one.
+ * Nothing here corrects a value that was read. A failed check means one of the
+ * two sides is wrong and the arithmetic cannot say which, so guessing would turn
+ * a visible error into an invisible one. The single exception is a count that
+ * was not read at all: when it is the only gap in its column, the TOTALS row
+ * determines it exactly (`solveInventoryCounts`), and the fill is reported.
  */
 
 import type {
@@ -23,8 +25,6 @@ import type {
   SettlementRow,
   ValidationIssue,
 } from '../types'
-
-export type { ValidationIssue }
 
 /** Money as an integer number of cents, or null when the text is not an amount. */
 function cents(text: string): number | null {
@@ -97,6 +97,69 @@ export function validateInventory(rows: readonly InventoryRow[]): ValidationIssu
   }
 
   return issues
+}
+
+/**
+ * Fill counts the reader could not produce, where the TOTALS row allows it.
+ *
+ * A count that came back blank or mangled is unknown, not wrong. With exactly
+ * one unknown in a column, `TOTALS − sum(the rest)` is its value — algebra, not
+ * a guess — so it is filled and reported. With two or more the split between
+ * them is undetermined, so they stay blank and are reported as unread: a game
+ * with a visible hole is recoverable by hand, a game with a plausible invented
+ * count is not.
+ */
+export function solveInventoryCounts(rows: readonly InventoryRow[]): {
+  rows: InventoryRow[]
+  issues: ValidationIssue[]
+} {
+  const out = rows.map((row) => ({ ...row }))
+  const issues: ValidationIssue[] = []
+  const totals = out.findIndex(isTotalsRow)
+  const totalsRow = totals === -1 ? undefined : out[totals]
+  const columns = ['int', 'rec', 'act', 'set'] as const
+  const label = (row: InventoryRow) => (row.game ? `game ${row.game}` : row.name || 'a row')
+
+  if (totalsRow) {
+    for (const column of columns) {
+      const stated = count(totalsRow[column])
+      if (stated === null) continue
+      let sum = 0
+      const unknown: number[] = []
+      out.forEach((row, index) => {
+        if (index === totals) return
+        const value = count(row[column])
+        if (value === null) unknown.push(index)
+        else sum += value
+      })
+      const target = unknown.length === 1 ? out[unknown[0]!] : undefined
+      const solved = stated - sum
+      if (!target || solved < 0 || solved > 999) continue
+      const read = target[column]
+      target[column] = String(solved).padStart(3, '0')
+      issues.push({
+        code: 'inventory-solved',
+        message:
+          `The ${column} count for ${label(target)} was ${read ? `read as "${read}"` : 'not read'}; ` +
+          `it is ${target[column]} from the TOTALS row.`,
+        rows: [unknown[0]!],
+      })
+    }
+  }
+
+  const unread = out
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => columns.some((column) => count(row[column]) === null))
+  if (unread.length > 0) {
+    issues.push({
+      code: 'inventory-unread',
+      message:
+        `Counts could not be read for ${unread.map(({ row }) => label(row)).join(', ')}. ` +
+        'Check these against the ticket before using the report.',
+      rows: unread.map(({ index }) => index),
+    })
+  }
+  return { rows: out, issues }
 }
 
 /**

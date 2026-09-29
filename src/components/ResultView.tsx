@@ -20,6 +20,20 @@ const EMPTY: Record<OcrResult['kind'], string> = {
   inventory: 'No inventory rows were read.',
   settlements: 'No pack settlements were read.',
   invoice: 'No invoice lines were read.',
+  table: 'No table rows were read.',
+}
+
+/** The column that holds the description, which should stay left-aligned. */
+function wideIndex(result: OcrResult): number {
+  if (result.kind === 'invoice') return 0
+  if (result.kind !== 'table') return 1
+  const description = result.headers.findIndex((header) => /description|product|item name/i.test(header))
+  return description >= 0 ? description : 0
+}
+
+function rowIsIncomplete(result: OcrResult, row: readonly string[]): boolean {
+  if (result.kind === 'table') return row.filter((cell) => cell.trim()).length < 2
+  return row.some((cell) => cell.trim() === '')
 }
 
 /** The kind's rows under the ticket's own column headers, with its checks above them. */
@@ -32,7 +46,7 @@ export function FieldsView({
   const { headers } = toPublicJson(result)
   const cells = rowCells(result)
   const confidences = rowConfidences(result)
-  const wide = result.kind === 'invoice' ? 0 : 1
+  const wide = wideIndex(result)
 
   const [query, setQuery] = useState('')
   const [filterMode, setFilterMode] = useState<'all' | 'flagged' | 'edited'>('all')
@@ -77,8 +91,7 @@ export function FieldsView({
     const avgConfidence = Math.round((sumConf / totalRows) * 100)
     const flaggedCount = cells.filter((row, idx) => {
       const conf = confidences[idx] ?? 0
-      const incomplete = row.some((c) => c.trim() === '')
-      return flagged.has(idx) || conf < reviewThreshold || incomplete
+      return flagged.has(idx) || conf < reviewThreshold || rowIsIncomplete(result, row)
     }).length
     return {
       totalRows,
@@ -86,7 +99,7 @@ export function FieldsView({
       flaggedCount,
       editedCount: edited.size,
     }
-  }, [cells, confidences, flagged, reviewThreshold, edited.size])
+  }, [cells, confidences, flagged, reviewThreshold, edited.size, result])
 
   // Filtered rows for fast interactive search & tab switching
   const filteredRows = useMemo(() => {
@@ -95,7 +108,8 @@ export function FieldsView({
       .map((row, originalIndex) => ({ row, originalIndex }))
       .filter(({ row, originalIndex }) => {
         const conf = confidences[originalIndex] ?? 0
-        const isFlagged = flagged.has(originalIndex) || conf < reviewThreshold || row.some((c) => c.trim() === '')
+        const isFlagged =
+          flagged.has(originalIndex) || conf < reviewThreshold || rowIsIncomplete(result, row)
         const isEdited = edited.has(originalIndex)
 
         if (filterMode === 'flagged' && !isFlagged) return false
@@ -107,7 +121,7 @@ export function FieldsView({
         }
         return true
       })
-  }, [cells, confidences, flagged, reviewThreshold, edited, filterMode, query])
+  }, [cells, confidences, flagged, reviewThreshold, edited, filterMode, query, result])
 
   return (
     <div className="fields-container">
@@ -233,7 +247,10 @@ export function FieldsView({
                     </td>
                     {row.map((cell, cellIndex) => {
                       const header = headers[cellIndex] ?? ''
-                      const numeric = cellIndex !== wide
+                      const numeric =
+                        result.kind === 'table'
+                          ? isNumericHeader(header)
+                          : cellIndex !== wide
                       const isEmpty = cell.trim() === ''
                       const isLowConfidence = confidence < reviewThreshold
 
@@ -250,7 +267,7 @@ export function FieldsView({
                           <input
                             className={`cell-input${isEmpty ? ' cell-input--empty' : ''}${isLowConfidence ? ' cell-input--low' : ''}`}
                             value={cell}
-                            size={numeric ? Math.max(cell.length, header.length, 3) : undefined}
+                            size={Math.max(cell.length, header.length, 4)}
                             placeholder="empty"
                             aria-label={`${header}, row ${originalIndex + 1}`}
                             readOnly={!onEdit}
@@ -273,6 +290,11 @@ export function FieldsView({
   )
 }
 
+function isNumericHeader(header: string): boolean {
+  if (/part|upc|sku|desc|name|item/i.test(header)) return false
+  return /\b(qty|quantity|price|prc|amount|amt|ext|extended|total|pack)\b/i.test(header)
+}
+
 function rowConfidences(result: OcrResult): number[] {
   switch (result.kind) {
     case 'inventory':
@@ -281,6 +303,8 @@ function rowConfidences(result: OcrResult): number[] {
       return result.settlements.map((row) => row.confidence)
     case 'invoice':
       return result.fields.map((row) => row.confidence)
+    case 'table':
+      return result.tableRows.map((row) => row.confidence)
     default: {
       const unreachable: never = result.kind
       return unreachable

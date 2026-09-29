@@ -6,9 +6,12 @@ import { StageProgress } from './components/StageProgress'
 import { reduceProgress, type StageMap } from './lib/stage-state'
 import { useTheme, type ThemePreference } from './lib/theme'
 import { drawImageDataTo, fileToImageData } from './lib/image-io'
+import { isPdf, pdfToImages, type PdfPage } from './lib/pdf-to-images'
+import { textLayerIsUsable } from './lib/pdf-text'
 import { OcrCancelledError, OcrClient } from './ocr/client'
+import type { ColumnGuide } from './ocr/layout/columns'
 import { toPublicJson, withCell } from './ocr/receipt/assemble'
-import { DEFAULT_OPTIONS, type OcrResult } from './ocr/types'
+import { DEFAULT_OPTIONS, type OcrResult, type ProgressEvent } from './ocr/types'
 
 type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
 
@@ -21,6 +24,8 @@ function resultTitle(result: OcrResult): string {
       return 'Pack Settlements'
     case 'invoice':
       return 'Invoice Breakdown'
+    case 'table':
+      return 'Invoice'
     default: {
       const unreachable: never = result.kind
       return unreachable
@@ -48,9 +53,26 @@ export default function App() {
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null)
   const [theme, setTheme] = useTheme()
 
+  // PDF multi-page state
+  const [pdfPages, setPdfPages] = useState<PdfPage[]>([])
+  const [currentPage, setCurrentPage] = useState(0)
+  const [pdfResults, setPdfResults] = useState<Map<number, { result: OcrResult; readResult: OcrResult }>>(new Map())
+  const [isPdfMode, setIsPdfMode] = useState(false)
+  const [pdfProcessingPage, setPdfProcessingPage] = useState<number | null>(null)
+
   const options = useMemo(() => DEFAULT_OPTIONS, [])
   const previewRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const columnGuideRef = useRef<ColumnGuide | null>(null)
+  const rememberColumns = (result: OcrResult) => {
+    if (
+      result.kind === 'table' &&
+      result.columnBounds &&
+      result.columnBounds.length === result.headers.length
+    ) {
+      columnGuideRef.current = { headers: result.headers, bounds: result.columnBounds }
+    }
+  }
 
   const client = useMemo(
     () =>
@@ -62,7 +84,7 @@ export default function App() {
   )
 
   useEffect(() => {
-    client.ready().catch(() => {})
+    client.ready().catch(() => { })
     return () => client.dispose()
   }, [client])
 
@@ -72,6 +94,105 @@ export default function App() {
       drawImageDataTo(previewRef.current, previewData)
     }
   }, [previewData, hasPreview])
+
+  /** Read one PDF page from its text layer, or OCR the raster when it has none. */
+  const recognizePage = useCallback(
+    async (page: PdfPage, controller: AbortController): Promise<OcrResult> => {
+      setImageDimensions({ width: page.width, height: page.height })
+      setPreviewData(page.imageData)
+      setHasPreview(true)
+      if (previewRef.current) {
+        drawImageDataTo(previewRef.current, page.imageData)
+      }
+
+      const onProgress = (event: ProgressEvent) => {
+        setStages((prev) => reduceProgress(prev, event))
+      }
+
+      const guide = columnGuideRef.current
+      if (textLayerIsUsable(page.words)) {
+        return client.assembleFromWords(
+          page.words,
+          { width: page.width, height: page.height },
+          { onProgress },
+          controller.signal,
+          guide,
+        )
+      }
+
+      return client.run(page.imageData, { onProgress }, controller.signal, guide)
+    },
+    [client],
+  )
+
+  /** Process a single ImageData through the OCR pipeline. */
+  const processImageData = useCallback(
+    async (
+      imageData: ImageData,
+      controller: AbortController,
+    ): Promise<OcrResult> => {
+      setImageDimensions({ width: imageData.width, height: imageData.height })
+      setPreviewData(imageData)
+      setHasPreview(true)
+
+      if (previewRef.current) {
+        drawImageDataTo(previewRef.current, imageData)
+      }
+
+      return client.run(
+        imageData,
+        { onProgress: (event) => setStages((prev) => reduceProgress(prev, event)) },
+        controller.signal,
+      )
+    },
+    [client],
+  )
+
+  /** Process a specific PDF page (0-indexed). */
+  const processPdfPage = useCallback(
+    async (pages: PdfPage[], pageIndex: number) => {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+
+      setCurrentPage(pageIndex)
+      setPhase(readerReady ? 'running' : 'booting')
+      setStages({})
+      setEdited(new Set())
+      setError(null)
+      setPdfProcessingPage(pageIndex)
+
+      const page = pages[pageIndex]
+      if (!page) return
+
+      try {
+        const next = await recognizePage(page, controller)
+        if (abortRef.current !== controller) return
+
+        setResult(next)
+        setReadResult(next)
+        rememberColumns(next)
+        setPdfResults((prev) => {
+          const updated = new Map(prev)
+          updated.set(pageIndex, { result: next, readResult: next })
+          return updated
+        })
+        setPhase('done')
+        setPdfProcessingPage(null)
+      } catch (e) {
+        if (abortRef.current !== controller) return
+        if (e instanceof OcrCancelledError) {
+          setPhase('idle')
+          setPdfProcessingPage(null)
+          return
+        }
+        setError(e instanceof Error ? e.message : String(e))
+        setPhase('error')
+        setPdfProcessingPage(null)
+      }
+    },
+    [recognizePage, readerReady],
+  )
 
   const onFile = useCallback(
     async (file: File) => {
@@ -86,22 +207,49 @@ export default function App() {
       setReadResult(null)
       setEdited(new Set())
       setError(null)
+      setPdfPages([])
+      setPdfResults(new Map())
+      setCurrentPage(0)
+      columnGuideRef.current = null
 
+      // ─── PDF path ───
+      if (isPdf(file)) {
+        setIsPdfMode(true)
+        try {
+          const pages = await pdfToImages(file, 200)
+          if (abortRef.current !== controller) return
+          if (pages.length === 0) throw new Error('PDF has no pages')
+
+          setPdfPages(pages)
+
+          // Auto-process the first page
+          const firstPage = pages[0]
+          if (!firstPage) throw new Error('PDF has no pages')
+          const next = await recognizePage(firstPage, controller)
+          if (abortRef.current !== controller) return
+
+          setResult(next)
+          setReadResult(next)
+          rememberColumns(next)
+          setPdfResults(new Map([[0, { result: next, readResult: next }]]))
+          setPhase('done')
+        } catch (e) {
+          if (abortRef.current !== controller) return
+          if (e instanceof OcrCancelledError) {
+            setPhase('idle')
+            return
+          }
+          setError(e instanceof Error ? e.message : String(e))
+          setPhase('error')
+        }
+        return
+      }
+
+      // ─── Image path (unchanged) ───
+      setIsPdfMode(false)
       try {
         const loaded = await fileToImageData(file, options.maxInputSize)
-        setImageDimensions({ width: loaded.imageData.width, height: loaded.imageData.height })
-        setPreviewData(loaded.imageData)
-        setHasPreview(true)
-
-        if (previewRef.current) {
-          drawImageDataTo(previewRef.current, loaded.imageData)
-        }
-
-        const next = await client.run(
-          loaded.imageData,
-          { onProgress: (event) => setStages((prev) => reduceProgress(prev, event)) },
-          controller.signal,
-        )
+        const next = await processImageData(loaded.imageData, controller)
         if (abortRef.current !== controller) return
         setResult(next)
         setReadResult(next)
@@ -116,7 +264,7 @@ export default function App() {
         setPhase('error')
       }
     },
-    [client, readerReady, options.maxInputSize],
+    [client, readerReady, options.maxInputSize, processImageData, recognizePage],
   )
 
 
@@ -141,7 +289,44 @@ export default function App() {
     setPreviewData(null)
     setFileName(null)
     setImageDimensions(null)
+    setPdfPages([])
+    setPdfResults(new Map())
+    setIsPdfMode(false)
+    setCurrentPage(0)
+    setPdfProcessingPage(null)
+    columnGuideRef.current = null
   }
+
+  /** Switch to a different PDF page. Loads cached result or runs OCR. */
+  const switchPdfPage = useCallback(
+    (pageIndex: number) => {
+      if (pageIndex < 0 || pageIndex >= pdfPages.length) return
+      setCurrentPage(pageIndex)
+
+      // Show the page preview immediately
+      const page = pdfPages[pageIndex]
+      setImageDimensions({ width: page.width, height: page.height })
+      setPreviewData(page.imageData)
+      if (previewRef.current) {
+        drawImageDataTo(previewRef.current, page.imageData)
+      }
+
+      // If already processed, restore cached result
+      const cached = pdfResults.get(pageIndex)
+      if (cached) {
+        setResult(cached.result)
+        setReadResult(cached.readResult)
+        setEdited(new Set())
+        setPhase('done')
+        setError(null)
+        return
+      }
+
+      // Otherwise, kick off OCR for this page
+      processPdfPage(pdfPages, pageIndex)
+    },
+    [pdfPages, pdfResults, processPdfPage],
+  )
 
   const busy = phase === 'running' || phase === 'booting'
 
@@ -252,6 +437,11 @@ export default function App() {
                 <div className="preview-meta">
                   <span className="preview-meta__filename" title={fileName ?? 'Receipt'}>
                     {fileName ?? 'Receipt'}
+                    {isPdfMode && pdfPages.length > 0 && (
+                      <span className="preview-meta__page-badge">
+                        PDF · {pdfPages.length} page{pdfPages.length > 1 ? 's' : ''}
+                      </span>
+                    )}
                   </span>
                   {imageDimensions && (
                     <span className="preview-meta__dims">
@@ -259,6 +449,54 @@ export default function App() {
                     </span>
                   )}
                 </div>
+
+                {/* PDF page navigator */}
+                {isPdfMode && pdfPages.length > 1 && (
+                  <div className="pdf-page-nav">
+                    <button
+                      className="btn btn--sm btn--ghost pdf-page-nav__btn"
+                      disabled={currentPage === 0 || busy}
+                      onClick={() => switchPdfPage(currentPage - 1)}
+                      aria-label="Previous page"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="15 18 9 12 15 6" />
+                      </svg>
+                    </button>
+                    <div className="pdf-page-nav__pages">
+                      {pdfPages.map((_, idx) => {
+                        const isCurrent = idx === currentPage
+                        const isProcessed = pdfResults.has(idx)
+                        const isProcessing = pdfProcessingPage === idx
+                        return (
+                          <button
+                            key={idx}
+                            className={`pdf-page-dot${isCurrent ? ' pdf-page-dot--active' : ''
+                              }${isProcessed ? ' pdf-page-dot--done' : ''}${isProcessing ? ' pdf-page-dot--processing' : ''
+                              }`}
+                            disabled={busy && !isCurrent}
+                            onClick={() => switchPdfPage(idx)}
+                            aria-label={`Page ${idx + 1}`}
+                            title={`Page ${idx + 1}${isProcessed ? ' (processed)' : ''}`}
+                          >
+                            {idx + 1}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <button
+                      className="btn btn--sm btn--ghost pdf-page-nav__btn"
+                      disabled={currentPage === pdfPages.length - 1 || busy}
+                      onClick={() => switchPdfPage(currentPage + 1)}
+                      aria-label="Next page"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+
                 <canvas ref={previewRef} className="preview" />
               </div>
 
@@ -275,7 +513,7 @@ export default function App() {
                     </svg>
                   </div>
                   <div>
-                    <strong>Could not read image:</strong> {error}
+                    <strong>Could not read {isPdfMode ? 'PDF' : 'image'}:</strong> {error}
                   </div>
                 </div>
               )}

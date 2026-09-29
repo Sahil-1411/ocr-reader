@@ -23,7 +23,9 @@ export function Dropzone({ onFile, disabled = false, hint }: DropzoneProps) {
     (files: FileList | null | undefined) => {
       const file = files?.[0]
       if (!file) return
-      if (!file.type.startsWith('image/')) return
+      const isImage = file.type.startsWith('image/')
+      const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+      if (!isImage && !isPdf) return
       onFile(file)
     },
     [onFile],
@@ -93,14 +95,14 @@ export function Dropzone({ onFile, disabled = false, hint }: DropzoneProps) {
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
             <circle cx="12" cy="13" r="4" />
           </svg>
-          Choose a ticket photo
+          Choose a ticket photo or PDF
         </label>
         <input
           ref={inputRef}
           id={inputId}
           className="dropzone__input"
           type="file"
-          accept="image/*"
+          accept="image/*,.pdf,application/pdf"
           capture="environment"
           disabled={disabled}
           onChange={(e) => {
@@ -109,7 +111,7 @@ export function Dropzone({ onFile, disabled = false, hint }: DropzoneProps) {
           }}
         />
         <p className="dropzone__hint">
-          {hint ?? 'Drag and drop, or paste image from clipboard'}
+          {hint ?? 'Drag and drop image or PDF, or paste from clipboard'}
         </p>
       </div>
     </div>

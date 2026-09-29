@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { OcrResult } from '../types'
-import { extractReceiptTitle, toPublicJson, withCell } from './assemble'
+import { assembleReceipt, extractReceiptTitle, toPublicJson, withCell } from './assemble'
 
 const settlements: OcrResult = {
   kind: 'settlements',
@@ -12,6 +12,7 @@ const settlements: OcrResult = {
     { gamePack: '833-129990', name: '200X THE CASH', dateSettled: '', confidence: 0.9 },
   ],
   fields: [],
+  tableRows: [],
   validation: [],
   processingMeta: {
     reader: 'python',
@@ -65,5 +66,118 @@ describe('extractReceiptTitle', () => {
       { text: 'SUMMARY', x: 380, y: 160, width: 140, height: 45, confidence: 0.95 },
     ]
     expect(extractReceiptTitle(words, 'inventory')).toBe('INSTANT INVENTORY SUMMARY')
+  })
+
+  it('uses the invoice number when the address shares that line', () => {
+    const words = [
+      { text: '1471', x: 40, y: 40, width: 40, height: 16, confidence: 1 },
+      { text: 'E.', x: 86, y: 40, width: 16, height: 16, confidence: 1 },
+      { text: '9', x: 108, y: 40, width: 12, height: 16, confidence: 1 },
+      { text: 'Mile', x: 126, y: 40, width: 36, height: 16, confidence: 1 },
+      { text: 'Rd.', x: 168, y: 40, width: 28, height: 16, confidence: 1 },
+      { text: 'Invoice#:', x: 420, y: 40, width: 80, height: 16, confidence: 1 },
+      { text: '476147ÍO]O', x: 508, y: 40, width: 90, height: 16, confidence: 1 },
+    ]
+    expect(extractReceiptTitle(words, 'table')).toBe('Invoice # 476147')
+  })
+
+  it('keeps WEEKLY INVOICE when the date range shares that line', () => {
+    const words = [
+      { text: 'Feb', x: 40, y: 20, width: 30, height: 16, confidence: 1 },
+      { text: 'Mon.', x: 76, y: 20, width: 36, height: 16, confidence: 1 },
+      { text: '23.', x: 118, y: 20, width: 24, height: 16, confidence: 1 },
+      { text: 'WEEKLY', x: 160, y: 20, width: 70, height: 16, confidence: 1 },
+      { text: 'INVOICE', x: 236, y: 20, width: 80, height: 16, confidence: 1 },
+      { text: 'Arkansas', x: 330, y: 20, width: 80, height: 16, confidence: 1 },
+      { text: '2026', x: 416, y: 20, width: 40, height: 16, confidence: 1 },
+    ]
+    expect(extractReceiptTitle(words, 'invoice')).toBe('WEEKLY INVOICE')
+  })
+})
+
+describe('assembleReceipt settlement headers', () => {
+  it('keeps Name apart from Game-Pack when the column gap is only a word space', () => {
+    const word = (text: string, x: number, y: number, width: number) => ({
+      text,
+      x,
+      y,
+      width,
+      height: 28,
+      confidence: 0.97,
+    })
+    const result = assembleReceipt(
+      [
+        word('Game-Pack', 69, 649, 139),
+        word('Name', 228, 649, 72),
+        word('Date', 577, 647, 59),
+        word('Settled', 651, 647, 88),
+        word('879-008949', 64, 684, 154),
+        word('MEGA', 230, 684, 72),
+        word('CASH', 310, 684, 62),
+        word('CROSSWORD', 387, 684, 163),
+        word('02/23/26', 579, 686, 110),
+        word('862-021236', 63, 722, 152),
+        word('MAYHEM', 228, 722, 80),
+        word('02/23/26', 575, 724, 113),
+        word('881-023234', 62, 762, 156),
+        word('DIAMONDS', 230, 762, 90),
+        word('02/23/26', 578, 764, 110),
+      ],
+      {
+        reader: 'tesseract',
+        watermarkSuppressed: false,
+        watermarkPixelRatio: 0,
+        sourceSize: { width: 805, height: 2000 },
+        timingsMs: {},
+      },
+      0.5,
+    )
+    expect(result.kind).toBe('settlements')
+    expect(result.headers).toEqual(['Game-Pack', 'Name', 'Date Settled'])
+  })
+})
+
+describe('assembleReceipt weekly invoice photos', () => {
+  it('stays a label and amount table when the page names the weekly lines', () => {
+    const word = (text: string, x: number, y: number, width = 40) => ({
+      text,
+      x,
+      y,
+      width,
+      height: 14,
+      confidence: 0.95,
+    })
+    const result = assembleReceipt(
+      [
+        word('WEEKLY', 40, 20, 70),
+        word('INVOICE', 116, 20, 80),
+        word('QTY', 40, 60, 30),
+        word('PACK', 90, 60, 40),
+        word('TOTAL', 150, 60, 50),
+        word('FWD', 40, 100, 30),
+        word('BALANCE', 76, 100, 70),
+        word('0.00', 400, 100, 40),
+        word('ON-LINE', 40, 130, 60),
+        word('NET', 106, 130, 30),
+        word('DUE', 142, 130, 30),
+        word('1381.74', 380, 130, 60),
+        word('INSTANT', 40, 160, 60),
+        word('NET', 106, 160, 30),
+        word('DUE', 142, 160, 30),
+        word('2782.43', 380, 160, 60),
+      ],
+      {
+        reader: 'tesseract',
+        watermarkSuppressed: false,
+        watermarkPixelRatio: 0,
+        sourceSize: { width: 500, height: 800 },
+        timingsMs: {},
+      },
+      0.5,
+    )
+    expect(result.kind).toBe('invoice')
+    expect(result.headers).toEqual(['label', 'value'])
+    expect(result.title).toBe('WEEKLY INVOICE')
+    expect(toPublicJson(result).rows[0]).toEqual({ label: 'FWD BALANCE', value: '0.00' })
   })
 })

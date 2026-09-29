@@ -93,6 +93,8 @@ export interface ProcessingMeta {
 export interface OcrResult {
   /** Which table was read. The public JSON follows this. */
   kind: ReceiptKind
+  /** Printed title read from the ticket, e.g. "WEEKLY PACK SETTLEMENTS". */
+  title?: string
   /**
    * The table's column headers as printed on the ticket, left to right — e.g.
    * `Game, Name, Int, Rec, Act, Set`. The public JSON keys its rows by these.

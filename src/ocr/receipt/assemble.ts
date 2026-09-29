@@ -6,6 +6,7 @@
 import {
   chooseReceiptKind,
   findInventoryHeader,
+  groupIntoLines,
   INVENTORY_HEADERS,
   inventoryRowsFromWords,
   invoiceRowsFromWords,
@@ -19,6 +20,90 @@ import {
   validateInvoice,
   validateSettlements,
 } from './validate'
+
+/** Clean extracted title string. */
+function cleanTitle(raw: string): string {
+  return raw
+    .replace(/WEEKLYINVOICE/i, 'WEEKLY INVOICE')
+    .replace(/PACKSETTLEMENTS?/i, 'PACK SETTLEMENTS')
+    .replace(/INVENTORYSUMMARY/i, 'INVENTORY SUMMARY')
+    .replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Extract printed header/title text directly from the receipt image words. */
+export function extractReceiptTitle(
+  words: readonly WordBox[],
+  kind: ReceiptKind,
+): string | undefined {
+  if (words.length === 0) return undefined
+  const lines = groupIntoLines(words)
+
+  // Title is located in the upper region of the ticket (typically the first 16 lines)
+  const topLines = lines.slice(0, 16)
+
+  interface ScoredLine {
+    text: string
+    score: number
+  }
+
+  const scored: ScoredLine[] = []
+
+  const kindKeywords: Record<ReceiptKind, RegExp> = {
+    settlements: /\bsettlements?\b/i,
+    inventory: /\binventory\b/i,
+    invoice: /\binvoice\b/i,
+  }
+
+  const secondaryKeywords =
+    /\b(?:pack\s+settlements?|weekly\s+pack|instant\s+inventory|inventory\s+summary|weekly\s+invoice|settlement\s+report)\b/i
+
+  for (const line of topLines) {
+    const rawText = line.map((w) => w.text).join(' ').trim()
+    const text = cleanTitle(rawText)
+    if (!text || text.length < 3) continue
+
+    // Skip URLs, retailer lines, pure dates/times, and column headers
+    if (/^https?:\/\/|www\.|\.com\b/i.test(text)) continue
+    if (/^retailer\b|^store\b|^terminal\b/i.test(text)) continue
+    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(text)) continue
+    if (/^(?:game|name|int|rec|act|set|game-pack|date settled)/i.test(text)) continue
+
+    let score = 0
+
+    // Match for the kind
+    if (kindKeywords[kind].test(text)) {
+      score += 50
+    }
+
+    // Strong compound match
+    if (secondaryKeywords.test(text)) {
+      score += 40
+    }
+
+    // Font height weight (larger font on ticket indicates main header)
+    const avgHeight = line.reduce((sum, w) => sum + w.height, 0) / line.length
+    score += Math.min(30, avgHeight)
+
+    // Uppercase header boost
+    if (text === text.toUpperCase() && /[A-Z]/.test(text)) {
+      score += 15
+    }
+
+    // Noise reduction
+    if (/scholarship|lottery/i.test(text) && !kindKeywords[kind].test(text)) {
+      score -= 20
+    }
+
+    if (score > 30) {
+      scored.push({ text, score })
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score)
+  return scored[0]?.text
+}
 
 /** The settlements table's printed header: `Game-Pack  Name  Date Settled`. */
 const SETTLEMENT_HEADERS = ['Game-Pack', 'Name', 'Date Settled'] as const
@@ -81,8 +166,11 @@ export function assembleReceipt(
       ? (findInventoryHeader(words)?.labels ?? defaultHeaders(kind))
       : defaultHeaders(kind)
 
+  const title = extractReceiptTitle(words, kind)
+
   return {
     kind,
+    title,
     headers,
     rows: keptRows,
     settlements: keptSettlements,
@@ -159,12 +247,14 @@ function defaultHeaders(kind: ReceiptKind): string[] {
  */
 export function toPublicJson(result: OcrResult): {
   kind: ReceiptKind
+  title?: string
   headers: string[]
   rows: Record<string, string>[]
 } {
-  const { headers } = result
+  const { headers, title } = result
   return {
     kind: result.kind,
+    ...(title ? { title } : {}),
     headers,
     rows: rowCells(result).map((cells) =>
       Object.fromEntries(headers.map((header, index) => [header, cells[index] ?? ''])),

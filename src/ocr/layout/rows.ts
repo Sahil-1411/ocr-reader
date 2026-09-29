@@ -954,12 +954,26 @@ function cleanLabel(words: readonly WordBox[]): string {
   return kept.join(' ')
 }
 
+const LOOKALIKE_DIGITS: Record<string, string> = { S: '5', O: '0', o: '0', B: '8', I: '1', l: '1' }
+
+/**
+ * A word's text as a pack code, with digit look-alikes the reader swaps in
+ * (`87S-010839`) put back. Only a hyphenated, mostly-digit token is repaired,
+ * so a name like `SOB` is never turned into digits.
+ */
+function packToken(text: string): string {
+  const token = tokenCore(text)
+  const shape = /^[\dSOoBIl]{3}-[\dSOoBIl]{5,8}$/
+  if (!shape.test(token) || (token.match(/\d/g) ?? []).length < 6) return token
+  return token.replace(/[SOoBIl]/g, (char) => LOOKALIKE_DIGITS[char] ?? char)
+}
+
 function findPack(words: readonly WordBox[]): { code: string; used: Set<WordBox> } | null {
   const ordered = [...words].sort((a, b) => a.x - b.x || a.y - b.y)
   for (let index = 0; index < ordered.length; index += 1) {
     const word = ordered[index]
     if (!word) continue
-    const token = tokenCore(word.text)
+    const token = packToken(word.text)
     if (PACK.test(token)) return { code: token, used: new Set([word]) }
     const bare = /^(\d{3})(\d{5,8})$/.exec(token)
     if (bare) return { code: `${bare[1]}-${bare[2]}`, used: new Set([word]) }
@@ -975,7 +989,7 @@ function findPack(words: readonly WordBox[]): { code: string; used: Set<WordBox>
 
 /** A game-pack code, with or without its hyphen, as the anchor of a row. */
 function looksLikePack(word: WordBox): boolean {
-  return /^\d{3}-?\d{5,8}$/.test(tokenCore(word.text))
+  return /^\d{3}-?\d{5,8}$/.test(packToken(word.text))
 }
 
 /** The game half of a pack code the reader split in two: `881` `023234`. */

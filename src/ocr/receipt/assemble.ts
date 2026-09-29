@@ -108,6 +108,35 @@ export function rowCells(result: OcrResult): string[][] {
   }
 }
 
+/** `result` with one cell of `rowCells(result)` replaced by `value`. */
+export function withCell(
+  result: OcrResult,
+  rowIndex: number,
+  cellIndex: number,
+  value: string,
+): OcrResult {
+  const replace = <T>(rows: readonly T[], keys: readonly (keyof T)[]): T[] =>
+    rows.map((row, index) => {
+      const key = keys[cellIndex]
+      return index === rowIndex && key !== undefined ? { ...row, [key]: value } : row
+    })
+  switch (result.kind) {
+    case 'inventory':
+      return { ...result, rows: replace(result.rows, ['game', 'name', 'int', 'rec', 'act', 'set']) }
+    case 'settlements':
+      return {
+        ...result,
+        settlements: replace(result.settlements, ['gamePack', 'name', 'dateSettled']),
+      }
+    case 'invoice':
+      return { ...result, fields: replace(result.fields, ['label', 'value']) }
+    default: {
+      const unreachable: never = result.kind
+      return unreachable
+    }
+  }
+}
+
 /** The printed headers for `kind`, used when the page's own were not read. */
 function defaultHeaders(kind: ReceiptKind): string[] {
   switch (kind) {

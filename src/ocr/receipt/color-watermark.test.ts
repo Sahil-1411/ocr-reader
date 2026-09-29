@@ -120,7 +120,7 @@ describe('isWatermarkWord', () => {
       data[i + 3] = 255
     }
     expect(
-      isWatermarkWord(4, data, { text: '336.00', x: 0, y: 0, width: 4, height: 4, confidence: 0.9 }),
+      isWatermarkWord(4, data, { text: '250.00', x: 0, y: 0, width: 4, height: 4, confidence: 0.9 }),
     ).toBe(false)
   })
 
@@ -132,7 +132,7 @@ describe('isWatermarkWord', () => {
     const data = stamped(size, size, (x) => (x === 3 || x === 4 ? INK : PAPER))
     expect(
       isWatermarkWord(size, data, {
-        text: '336.00',
+        text: '250.00',
         x: 0,
         y: 0,
         width: size,

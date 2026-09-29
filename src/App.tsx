@@ -7,7 +7,7 @@ import { reduceProgress, type StageMap } from './lib/stage-state'
 import { useTheme, type ThemePreference } from './lib/theme'
 import { drawImageDataTo, fileToImageData } from './lib/image-io'
 import { OcrCancelledError, OcrClient } from './ocr/client'
-import { toPublicJson } from './ocr/receipt/assemble'
+import { toPublicJson, withCell } from './ocr/receipt/assemble'
 import { DEFAULT_OPTIONS, type OcrResult, type ReceiptKind } from './ocr/types'
 
 type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
@@ -37,6 +37,9 @@ export default function App() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [stages, setStages] = useState<StageMap>({})
   const [result, setResult] = useState<OcrResult | null>(null)
+  // The result as read, kept so hand edits can be undone.
+  const [readResult, setReadResult] = useState<OcrResult | null>(null)
+  const [edited, setEdited] = useState<ReadonlySet<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [readerReady, setReaderReady] = useState(false)
   const [hasPreview, setHasPreview] = useState(false)
@@ -73,6 +76,8 @@ export default function App() {
       setPhase(readerReady ? 'running' : 'booting')
       setStages({})
       setResult(null)
+      setReadResult(null)
+      setEdited(new Set())
       setError(null)
 
       try {
@@ -89,6 +94,7 @@ export default function App() {
         )
         if (abortRef.current !== controller) return
         setResult(next)
+        setReadResult(next)
         setPhase('done')
       } catch (e) {
         if (abortRef.current !== controller) return
@@ -102,6 +108,16 @@ export default function App() {
     },
     [client, readerReady, options.maxInputSize],
   )
+
+  const onEdit = useCallback((rowIndex: number, cellIndex: number, value: string) => {
+    setResult((current) => current && withCell(current, rowIndex, cellIndex, value))
+    setEdited((current) => new Set(current).add(rowIndex))
+  }, [])
+
+  const resetEdits = () => {
+    setResult(readResult)
+    setEdited(new Set())
+  }
 
   const busy = phase === 'running' || phase === 'booting'
 
@@ -165,10 +181,24 @@ export default function App() {
               <div className="card">
                 <div className="card__head">
                   <h2 className="card__title">{resultTitle(result.kind)}</h2>
-                  <span className="count">{toPublicJson(result).rows.length} rows</span>
+                  <div className="btn-row">
+                    {edited.size > 0 && (
+                      <button className="btn btn--sm" onClick={resetEdits}>
+                        Reset edits
+                      </button>
+                    )}
+                    <span className="count">
+                      {toPublicJson(result).rows.length} rows
+                      {edited.size > 0 && ` · ${edited.size} edited`}
+                    </span>
+                  </div>
                 </div>
                 <div className="card__body">
-                  <FieldsView result={result} />
+                  <p className="muted fields__hint">
+                    Click any cell to correct it. Red rows are missing data; the JSON below
+                    includes your edits.
+                  </p>
+                  <FieldsView result={result} edited={edited} onEdit={onEdit} />
                 </div>
               </div>
 

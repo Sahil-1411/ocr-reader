@@ -38,10 +38,10 @@ describe('splitLabelValue', () => {
       word('Cash', 20, 100),
       word('3', 70, 100, { width: 14 }),
       word('Cashes', 100, 100),
-      word('40.00', 400, 100, { width: 50 }),
+      word('25.00', 400, 100, { width: 50 }),
       word('C', 452, 100, { width: 12 }),
     ]
-    expect(splitLabelValue(line)).toEqual({ label: 'Cash 3 Cashes', value: '40.00C' })
+    expect(splitLabelValue(line)).toEqual({ label: 'Cash 3 Cashes', value: '25.00C' })
   })
 
   it('keeps the game name, including its price, and peels the count columns', () => {
@@ -103,8 +103,8 @@ describe('splitLabelValue', () => {
   })
 
   it('takes a retailer id that follows a colon', () => {
-    const line = [word('Retailer:', 40, 90, { width: 70 }), word('401243', 120, 90, { width: 60 })]
-    expect(splitLabelValue(line)).toEqual({ label: 'Retailer:', value: '401243' })
+    const line = [word('Retailer:', 40, 90, { width: 70 }), word('999999', 120, 90, { width: 60 })]
+    expect(splitLabelValue(line)).toEqual({ label: 'Retailer:', value: '999999' })
   })
 
   it('rejoins an amount that was split at the decimal point', () => {
@@ -112,10 +112,10 @@ describe('splitLabelValue', () => {
       word('ON-LINE', 20, 100),
       word('NET', 100, 100),
       word('DUE', 150, 100),
-      word('1,381', 400, 100, { width: 50 }),
-      word('.74', 452, 100, { width: 24 }),
+      word('1,234', 400, 100, { width: 50 }),
+      word('.56', 452, 100, { width: 24 }),
     ]
-    expect(splitLabelValue(line)).toEqual({ label: 'ON-LINE NET DUE', value: '1,381.74' })
+    expect(splitLabelValue(line)).toEqual({ label: 'ON-LINE NET DUE', value: '1,234.56' })
   })
 })
 
@@ -488,6 +488,16 @@ describe('settlementRowsFromWords', () => {
     expect(rows[3]).toMatchObject({ gamePack: '881-023234', name: 'GAME4', dateSettled: '' })
   })
 
+  it('repairs a pack code with a letter read for a digit', () => {
+    const rows = settlementRowsFromWords([
+      word('87S-010839', 20, 80, { width: 110 }),
+      word('$500', 140, 80, { width: 40 }),
+      word('STACKED', 190, 80),
+      word('02/24/26', 460, 84, { width: 70 }),
+    ])
+    expect(rows[0]).toMatchObject({ gamePack: '875-010839', name: '$500 STACKED' })
+  })
+
   it('does not turn the date range above the table into a row', () => {
     expect(settlementRowsFromWords(table())).toHaveLength(4)
   })
@@ -523,11 +533,11 @@ describe('invoiceRowsFromWords', () => {
       word('Cash', 105, 40, { width: 38, height: 13 }),
       word('3', 148, 40, { width: 10, height: 13 }),
       word('Sales', 163, 40, { width: 40, height: 13 }),
-      word('336.00', 421, 42, { width: 44, height: 12 }),
+      word('250.00', 421, 42, { width: 44, height: 12 }),
     ])
 
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
-      { label: 'Cash 3 Sales', value: '336.00' },
+      { label: 'Cash 3 Sales', value: '250.00' },
     ])
   })
 
@@ -539,15 +549,15 @@ describe('invoiceRowsFromWords', () => {
       word('ON-LINE', 20, 80),
       word('NET', 100, 80),
       word('DUE', 150, 82),
-      word('1,381', 400, 88, { width: 50 }),
-      word('.74', 452, 88, { width: 24 }),
+      word('1,234', 400, 88, { width: 50 }),
+      word('.56', 452, 88, { width: 24 }),
       word('ONLINE', 80, 130),
       word('GAMES', 160, 130),
     ])
 
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
       { label: 'FWD BALANCE', value: '0.00' },
-      { label: 'ON-LINE NET DUE', value: '1,381.74' },
+      { label: 'ON-LINE NET DUE', value: '1,234.56' },
     ])
   })
 
@@ -561,35 +571,35 @@ describe('invoiceRowsFromWords', () => {
       word('Cash', 20, 90),
       word('3', 70, 90, { width: 14 }),
       word('Cashes', 100, 90),
-      word('40.00¢', 450, 92, { width: 60 }),
+      word('25.00¢', 450, 92, { width: 60 }),
       word('Fast', 20, 140),
       word('Play', 70, 140),
       word('Sales', 120, 140),
-      word('29300', 450, 144, { width: 50 }),
+      word('17500', 450, 144, { width: 50 }),
     ])
 
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
       { label: 'Scholarship RAFFLE Sales', value: '0.00' },
-      { label: 'Cash 3 Cashes', value: '40.00C' },
-      { label: 'Fast Play Sales', value: '293.00' },
+      { label: 'Cash 3 Cashes', value: '25.00C' },
+      { label: 'Fast Play Sales', value: '175.00' },
     ])
   })
 
   it('repairs a thousands mark read as a dot and ignores a retailer id', () => {
     const rows = invoiceRowsFromWords([
       word('Retailer', 40, 40, { width: 70 }),
-      word('401243', 260, 40, { width: 70 }),
+      word('999999', 260, 40, { width: 70 }),
       word('Packs', 40, 100),
       word('Settled', 100, 100),
-      word('9.90000', 420, 100, { width: 70 }),
+      word('7.50000', 420, 100, { width: 70 }),
       word('L/T', 40, 150, { width: 30 }),
       word('Cashes', 80, 150),
-      word('4.577.00C', 420, 152, { width: 90 }),
+      word('3.210.00C', 420, 152, { width: 90 }),
     ])
 
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
-      { label: 'Packs Settled', value: '9900.00' },
-      { label: 'L/T Cashes', value: '4577.00C' },
+      { label: 'Packs Settled', value: '7500.00' },
+      { label: 'L/T Cashes', value: '3210.00C' },
     ])
   })
 
@@ -609,7 +619,7 @@ describe('invoiceRowsFromWords', () => {
   it('reads amounts the stamp left trailing junk on', () => {
     const rows = invoiceRowsFromWords([
       word('ON-LINENETDUE', 104, 40, { width: 140 }),
-      word('138174]', 389, 40, { width: 70 }),
+      word('123456]', 389, 40, { width: 70 }),
       word('NON-GAME', 97, 100, { width: 80 }),
       word('ADJUSTMENTS', 193, 100),
       word('0.003', 421, 100, { width: 40 }),
@@ -618,21 +628,21 @@ describe('invoiceRowsFromWords', () => {
       word('5.00%', 421, 160, { width: 40 }),
       word('Sales', 106, 220),
       word('Comm', 150, 220),
-      word('9393c', 399, 220, { width: 50 }),
+      word('8642c', 399, 220, { width: 50 }),
       word('Cashing', 105, 280),
       word('Comm', 168, 280),
-      word('3.83C|*', 408, 280, { width: 60 }),
+      word('2.71C|*', 408, 280, { width: 60 }),
       word('Cashes', 126, 340),
-      word('1,980.00€', 375, 340, { width: 80 }),
+      word('1,500.00€', 375, 340, { width: 80 }),
     ])
 
     expect(rows.map(({ label, value }) => ({ label, value }))).toEqual([
-      { label: 'ON-LINENETDUE', value: '1381.74' },
+      { label: 'ON-LINENETDUE', value: '1234.56' },
       { label: 'NON-GAME ADJUSTMENTS', value: '0.00' },
       { label: 'SYSTEM FEE', value: '5.00' },
-      { label: 'Sales Comm', value: '93.93C' },
-      { label: 'Cashing Comm', value: '3.83C' },
-      { label: 'Cashes', value: '1,980.00C' },
+      { label: 'Sales Comm', value: '86.42C' },
+      { label: 'Cashing Comm', value: '2.71C' },
+      { label: 'Cashes', value: '1,500.00C' },
     ])
   })
 

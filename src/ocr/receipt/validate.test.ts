@@ -130,10 +130,10 @@ describe('validateSettlements', () => {
 })
 
 describe('validateInvoice', () => {
-  /** The real header block from public/samples/weekly-invoice.jpg. */
-  const header = (total: string, instant = '2,782.43') => [
+  /** A header block laid out like the weekly invoice, with made-up amounts. */
+  const header = (total: string, instant = '2,345.67') => [
     field('FWD BALANCE', '0.00'),
-    field('ON-LINE NET DUE', '1381.74'),
+    field('ON-LINE NET DUE', '1234.56'),
     field('INSTANT NET DUE', instant),
     field('NON-GAME ADJUSTMENTS', '0.00'),
     field('SYSTEM FEE', '5.00'),
@@ -141,38 +141,38 @@ describe('validateInvoice', () => {
     field('TOTAL DUE BY WED', total),
   ]
 
-  it('passes on the real header figures', () => {
-    expect(validateInvoice(header('4169.17'))).toEqual([])
+  it('passes when the header figures add up', () => {
+    expect(validateInvoice(header('3585.23'))).toEqual([])
   })
 
   it('catches a misread digit in the header block', () => {
-    // 2,762.43 instead of 2,782.43 — the error the watermark actually produced.
-    const issues = validateInvoice(header('4169.17', '2762.43'))
+    // 2,325.67 instead of 2,345.67 — one digit misread, as the watermark does.
+    const issues = validateInvoice(header('3585.23', '2325.67'))
     expect(issues.map((i) => i.code)).toContain('invoice-total')
-    expect(issues[0]?.message).toContain('4149.17')
-    expect(issues[0]?.message).toContain('4169.17')
+    expect(issues[0]?.message).toContain('3565.23')
+    expect(issues[0]?.message).toContain('3585.23')
   })
 
   it('catches a section footer that disagrees with its header line', () => {
     const issues = validateInvoice([
-      ...header('4169.17'),
-      field('Instant Net Due', '2762.43'),
+      ...header('3585.23'),
+      field('Instant Net Due', '2325.67'),
     ])
     const section = issues.find((i) => i.code === 'invoice-section-total')
     expect(section).toBeDefined()
-    expect(section?.message).toContain('2782.43')
-    expect(section?.message).toContain('2762.43')
+    expect(section?.message).toContain('2345.67')
+    expect(section?.message).toContain('2325.67')
   })
 
   it('accepts a section footer that agrees', () => {
-    const issues = validateInvoice([...header('4169.17'), field('Instant Net Due', '2,782.43')])
+    const issues = validateInvoice([...header('3585.23'), field('Instant Net Due', '2,345.67')])
     expect(issues).toEqual([])
   })
 
   it('stays quiet when a header line is missing rather than wrong', () => {
     // A missing line and a misread one look identical to a sum, so the check
     // has to abstain rather than report a total that is merely incomplete.
-    const rows = header('4169.17').filter((f) => f.label !== 'SYSTEM FEE')
+    const rows = header('3585.23').filter((f) => f.label !== 'SYSTEM FEE')
     expect(validateInvoice(rows).filter((i) => i.code === 'invoice-total')).toEqual([])
   })
 

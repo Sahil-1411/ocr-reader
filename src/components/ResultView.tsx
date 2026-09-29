@@ -11,6 +11,9 @@ interface FieldsViewProps {
   result: OcrResult
   /** Readings below this confidence are flagged for a human to check. */
   reviewThreshold?: number
+  /** Rows the user has corrected by hand. */
+  edited?: ReadonlySet<number>
+  onEdit?: (rowIndex: number, cellIndex: number, value: string) => void
 }
 
 const EMPTY: Record<OcrResult['kind'], string> = {
@@ -20,7 +23,12 @@ const EMPTY: Record<OcrResult['kind'], string> = {
 }
 
 /** The kind's rows under the ticket's own column headers, with its checks above them. */
-export function FieldsView({ result, reviewThreshold = 0.55 }: FieldsViewProps) {
+export function FieldsView({
+  result,
+  reviewThreshold = 0.55,
+  edited = new Set(),
+  onEdit,
+}: FieldsViewProps) {
   const { headers } = toPublicJson(result)
   const cells = rowCells(result)
   const confidences = rowConfidences(result)
@@ -74,24 +82,41 @@ export function FieldsView({ result, reviewThreshold = 0.55 }: FieldsViewProps) 
           <tbody>
             {cells.map((row, index) => {
               const confidence = confidences[index] ?? 0
-              const tone = flagged.has(index)
-                ? 'fields__row--flagged'
-                : solved.has(index) || confidence < reviewThreshold
-                  ? 'fields__row--low'
-                  : ''
+              const complete = row.every((cell) => cell.trim() !== '')
+              const tone =
+                edited.has(index) && complete
+                  ? 'fields__row--edited'
+                  : flagged.has(index)
+                    ? 'fields__row--flagged'
+                    : solved.has(index) || confidence < reviewThreshold
+                      ? 'fields__row--low'
+                      : ''
               const total = /^totals?$/i.test(row[wide] ?? '') ? 'fields__row--total' : ''
               const className = [tone, total].filter(Boolean).join(' ') || undefined
               return (
-                <tr key={`${row.join('|')}-${index}`} className={className}>
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={headers[cellIndex] ?? cellIndex}
-                      className={cellIndex === wide ? undefined : 'num'}
-                      title={`confidence ${(confidence * 100).toFixed(0)}%`}
-                    >
-                      {cell}
-                    </td>
-                  ))}
+                <tr key={index} className={className}>
+                  {row.map((cell, cellIndex) => {
+                    const header = headers[cellIndex] ?? ''
+                    const numeric = cellIndex !== wide
+                    return (
+                      <td
+                        key={header || cellIndex}
+                        className={numeric ? 'num' : undefined}
+                        title={edited.has(index) ? 'edited by hand' : `confidence ${(confidence * 100).toFixed(0)}%`}
+                      >
+                        <input
+                          className={`cell-input${cell.trim() === '' ? ' cell-input--empty' : ''}`}
+                          value={cell}
+                          size={numeric ? Math.max(cell.length, header.length, 4) : undefined}
+                          placeholder="enter value"
+                          aria-label={`${header}, row ${index + 1}`}
+                          readOnly={!onEdit}
+                          spellCheck={false}
+                          onChange={(event) => onEdit?.(index, cellIndex, event.target.value)}
+                        />
+                      </td>
+                    )
+                  })}
                 </tr>
               )
             })}

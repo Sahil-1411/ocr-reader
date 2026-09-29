@@ -133,36 +133,6 @@ button {
   gap: 10px;
 }
 
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-raised);
-  color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.status__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-faint);
-  flex: none;
-}
-
-.status--ok .status__dot {
-  background: var(--ok);
-}
-
-.status--warn .status__dot {
-  background: var(--warn);
-}
-
 .segmented {
   display: inline-flex;
   padding: 2px;
@@ -538,22 +508,6 @@ button {
 .banner__list {
   margin: 4px 0 0;
   padding-left: 18px;
-}
-
-.spinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--border-strong);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 700ms linear infinite;
-  flex: none;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -173,17 +173,32 @@ export function validateSettlements(
   rows: readonly SettlementRow[],
   statedTotal: number | null,
 ): ValidationIssue[] {
-  if (statedTotal === null || rows.length === statedTotal) return []
-  const missing = statedTotal - rows.length
-  return [
-    {
+  const issues: ValidationIssue[] = []
+  if (statedTotal !== null && rows.length !== statedTotal) {
+    const missing = statedTotal - rows.length
+    issues.push({
       code: 'settlements-count',
       message:
         `The receipt settles ${statedTotal} packs but ${rows.length} rows were read` +
         `${missing > 0 ? ` — ${missing} row${missing === 1 ? ' is' : 's are'} missing` : ''}.`,
       rows: [],
-    },
-  ]
+    })
+  }
+
+  const unread = rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !row.gamePack || !row.name || !row.dateSettled)
+  if (unread.length > 0) {
+    const labels = unread.map(({ row, index }) => row.gamePack || row.name || `row ${index + 1}`)
+    issues.push({
+      code: 'settlements-unread',
+      message:
+        `Part of ${labels.join(', ')} could not be read. ` +
+        'Check these against the ticket before using the report.',
+      rows: unread.map(({ index }) => index),
+    })
+  }
+  return issues
 }
 
 /** Find a field by label, ignoring case, spacing and the reader's punctuation. */

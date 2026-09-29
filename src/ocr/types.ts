@@ -58,6 +58,7 @@ export interface ValidationIssue {
     | 'inventory-solved'
     | 'inventory-unread'
     | 'settlements-count'
+    | 'settlements-unread'
     | 'invoice-total'
     | 'invoice-section-total'
   /** One sentence naming both sides of the contradiction. */

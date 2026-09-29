@@ -119,6 +119,14 @@ describe('validateSettlements', () => {
   it('stays quiet when the footer total was not read', () => {
     expect(validateSettlements([settlement('862-021236')], null)).toEqual([])
   })
+
+  it('flags rows with an unreadable pack code or date', () => {
+    const rows = [settlement('862-021236'), { ...settlement(''), name: 'LUCKY 7S' }]
+    const issues = validateSettlements(rows, 2)
+    expect(issues.map((issue) => issue.code)).toEqual(['settlements-unread'])
+    expect(issues[0]?.rows).toEqual([1])
+    expect(issues[0]?.message).toContain('LUCKY 7S')
+  })
 })
 
 describe('validateInvoice', () => {

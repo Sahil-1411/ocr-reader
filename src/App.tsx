@@ -27,22 +27,6 @@ function resultTitle(kind: ReceiptKind): string {
   }
 }
 
-function currentStatus(
-  busy: boolean,
-  readerReady: boolean,
-  backend: string,
-  stages: StageMap,
-): string {
-  let active: string | undefined
-  for (const stage of Object.values(stages)) {
-    if (stage?.status === 'start') active = stage.message ?? 'reading…'
-  }
-  if (active) return active
-  if (busy && !readerReady) return 'loading reader…'
-  if (busy) return 'reading…'
-  return backend
-}
-
 const THEMES: { value: ThemePreference; label: string }[] = [
   { value: 'system', label: 'System' },
   { value: 'light', label: 'Light' },
@@ -54,7 +38,6 @@ export default function App() {
   const [stages, setStages] = useState<StageMap>({})
   const [result, setResult] = useState<OcrResult | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [backend, setBackend] = useState<string>('starting…')
   const [readerReady, setReaderReady] = useState(false)
   const [hasPreview, setHasPreview] = useState(false)
   const [theme, setTheme] = useTheme()
@@ -67,10 +50,7 @@ export default function App() {
   const client = useMemo(
     () =>
       new OcrClient(options, {
-        onReady: (provider) => {
-          setBackend(provider)
-          setReaderReady(true)
-        },
+        onReady: () => setReaderReady(true),
         onFatal: (e) => setError(e.message),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally once per page
@@ -78,8 +58,8 @@ export default function App() {
   )
 
   useEffect(() => {
-    // Find out now whether the Python reader is up, so the header says so
-    // before the first image. A failure is reported through `onFatal`.
+    // Load the reader now so the first image doesn't wait on it. A failure is
+    // reported through `onFatal`.
     client.ready().catch(() => {})
     return () => client.dispose()
   }, [client])
@@ -124,8 +104,6 @@ export default function App() {
   )
 
   const busy = phase === 'running' || phase === 'booting'
-  const statusText = currentStatus(busy, readerReady, backend, stages)
-  const statusTone = busy || !readerReady ? '' : backend.startsWith('python') ? ' status--ok' : ' status--warn'
 
   return (
     <div className="app">
@@ -137,10 +115,6 @@ export default function App() {
           </p>
         </div>
         <div className="app__controls">
-          <span className={`status${statusTone}`} title="Which reader is in use">
-            {busy ? <span className="spinner" aria-hidden /> : <span className="status__dot" aria-hidden />}
-            {statusText}
-          </span>
           <div className="segmented" role="group" aria-label="Theme">
             {THEMES.map(({ value, label }) => (
               <button

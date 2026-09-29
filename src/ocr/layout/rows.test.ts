@@ -444,6 +444,53 @@ describe('settlementRowsFromWords', () => {
     ])
     expect(rows[0]?.name).toBe('$1,000 MAYHEM')
   })
+
+  /** Four settlement lines 40px apart, each with its pack code and date. */
+  const table = () => [
+    word('02/23/26', 300, 20, { width: 70 }),
+    word('-', 380, 20, { width: 8 }),
+    word('03/01/26', 395, 20, { width: 70 }),
+    ...['879-008949', '862-021236', '869-004512', '881-023234'].flatMap((pack, index) => [
+      word(pack, 20, 80 + index * 40, { width: 110 }),
+      word(`GAME${index + 1}`, 140, 80 + index * 40),
+      word('02/23/26', 460, 82 + index * 40, { width: 70 }),
+    ]),
+  ]
+
+  it('keeps a row whose date could not be read', () => {
+    const words = table().filter((w) => !(w.text === '02/23/26' && w.y === 162))
+    const rows = settlementRowsFromWords(words)
+    expect(rows.map((row) => [row.gamePack, row.dateSettled])).toEqual([
+      ['879-008949', '02/23/26'],
+      ['862-021236', '02/23/26'],
+      ['869-004512', ''],
+      ['881-023234', '02/23/26'],
+    ])
+  })
+
+  it('keeps a row whose pack code could not be read', () => {
+    const words = table().map((w) => (w.text === '862-021236' ? { ...w, text: '8G2-O2' } : w))
+    const rows = settlementRowsFromWords(words)
+    expect(rows).toHaveLength(4)
+    expect(rows[1]).toMatchObject({ gamePack: '', dateSettled: '02/23/26' })
+    expect(rows[1]?.name).toContain('GAME2')
+  })
+
+  it('keeps a row with a split pack code and no date', () => {
+    const words = table()
+      .filter((w) => !(w.text === '02/23/26' && w.y === 202))
+      .flatMap((w) =>
+        w.text === '881-023234'
+          ? [word('881', 20, w.y, { width: 30 }), word('023234', 54, w.y, { width: 60 })]
+          : [w],
+      )
+    const rows = settlementRowsFromWords(words)
+    expect(rows[3]).toMatchObject({ gamePack: '881-023234', name: 'GAME4', dateSettled: '' })
+  })
+
+  it('does not turn the date range above the table into a row', () => {
+    expect(settlementRowsFromWords(table())).toHaveLength(4)
+  })
 })
 
 describe('invoiceRowsFromWords', () => {

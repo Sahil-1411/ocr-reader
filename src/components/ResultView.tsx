@@ -37,7 +37,7 @@ export function FieldsView({ result, reviewThreshold = 0.55 }: FieldsViewProps) 
   const { reader, warnings } = result.processingMeta
   const notices = [
     ...(reader.includes('not running')
-      ? [`Read with ${reader} — start tools/serve.py for the more accurate reader.`]
+      ? ['This receipt was read in basic mode, so results may be less accurate. Check every row against the ticket.']
       : []),
     ...new Set(warnings),
   ]

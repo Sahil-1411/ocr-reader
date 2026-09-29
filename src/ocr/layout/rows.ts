@@ -961,6 +961,8 @@ function findPack(words: readonly WordBox[]): { code: string; used: Set<WordBox>
     if (!word) continue
     const token = tokenCore(word.text)
     if (PACK.test(token)) return { code: token, used: new Set([word]) }
+    const bare = /^(\d{3})(\d{5,8})$/.exec(token)
+    if (bare) return { code: `${bare[1]}-${bare[2]}`, used: new Set([word]) }
     const next = ordered[index + 1]
     if (!next) continue
     if (next.x - (word.x + word.width) > 24) continue
@@ -971,9 +973,31 @@ function findPack(words: readonly WordBox[]): { code: string; used: Set<WordBox>
   return null
 }
 
+/** A game-pack code, with or without its hyphen, as the anchor of a row. */
+function looksLikePack(word: WordBox): boolean {
+  return /^\d{3}-?\d{5,8}$/.test(tokenCore(word.text))
+}
+
+/** The game half of a pack code the reader split in two: `881` `023234`. */
+function opensSplitPack(word: WordBox, words: readonly WordBox[]): boolean {
+  if (!/^\d{3}-?$/.test(tokenCore(word.text))) return false
+  return words.some(
+    (next) =>
+      /^-?\d{5,8}$/.test(tokenCore(next.text)) &&
+      next.x > word.x &&
+      next.x - (word.x + word.width) <= 24 &&
+      verticalOverlap(next, { top: word.y, bottom: word.y + word.height }) > word.height * 0.5,
+  )
+}
+
 /**
  * Weekly pack settlements: a game-pack code and a name on the left, a date
- * on the right. Header and footer lines, which have no pack code, are left out.
+ * on the right. Header and footer lines are left out.
+ *
+ * Every settlement is a row, even when the watermark took its pack code or its
+ * date: a row opens at a pack code in the left column, or at a date in the date
+ * column when no pack code was read on that line. A missing part stays empty so
+ * the row is visible to check rather than silently dropped.
  */
 export function settlementRowsFromWords(
   words: readonly WordBox[],
@@ -983,12 +1007,15 @@ export function settlementRowsFromWords(
     (word) => word.text.trim().length > 0 && word.width > 0 && word.height > 0,
   )
   const right = pageRight(usable)
+  const packs = usable.filter(
+    (word) => word.x < right * 0.4 && (looksLikePack(word) || opensSplitPack(word, usable)),
+  )
   // The x guard matters more now that the date is read from digits alone: a
   // pack code's own suffix can arrange into a valid month and day, and only its
   // position on the left keeps it from anchoring a row of its own.
-  const anchors = usable.filter(
-    (word) => settledDate(word.text) !== null && word.x >= right * 0.4,
-  )
+  const dates = usable.filter((word) => settledDate(word.text) !== null && word.x >= right * 0.4)
+  const anchors = [...packs, ...datesWithoutPack(packs, dates)]
+
   const rows: SettlementRow[] = []
   for (const line of assignToAnchors(usable, anchors, overlapRatio, 0.42)) {
     const ordered = [...line].sort((a, b) => a.x - b.x || a.y - b.y)
@@ -996,21 +1023,47 @@ export function settlementRowsFromWords(
       .reverse()
       .find((word) => word.x >= right * 0.4 && settledDate(word.text) !== null)
     const pack = findPack(ordered)
-    if (!dateWord || !pack) continue
-    const used = new Set(pack.used)
-    used.add(dateWord)
+    if (!dateWord && !pack) continue
+    const used = new Set(pack?.used ?? [])
+    if (dateWord) used.add(dateWord)
     const name = repairGameName(
-      cleanLabel(ordered.filter((word) => !used.has(word) && word.x < dateWord.x)),
+      cleanLabel(ordered.filter((word) => !used.has(word) && (!dateWord || word.x < dateWord.x))),
     )
-    if (!name) continue
     rows.push({
-      gamePack: pack.code,
+      gamePack: pack?.code ?? '',
       name,
-      dateSettled: settledDate(dateWord.text) ?? tokenCore(dateWord.text),
+      dateSettled: dateWord ? (settledDate(dateWord.text) ?? '') : '',
       confidence: meanConfidence(ordered),
     })
   }
   return rows
+}
+
+/**
+ * Dates that open a row of their own because no pack code was read beside
+ * them. Only those inside the table and under its date column count, so the
+ * printed date range above the table never becomes a settlement.
+ */
+function datesWithoutPack(packs: readonly WordBox[], dates: readonly WordBox[]): WordBox[] {
+  if (packs.length < 3) return []
+  const pitch = rowPitch(packs)
+  const top = Math.min(...packs.map(centerY)) - pitch * 1.5
+  const bottom = Math.max(...packs.map(centerY)) + pitch * 1.5
+  const paired = dates.filter((date) =>
+    packs.some((pack) => Math.abs(centerY(pack) - centerY(date)) < pitch * 0.5),
+  )
+  if (paired.length === 0) return []
+  const column = median(paired.map((date) => date.x + date.width / 2))
+  const width = median(paired.map((date) => date.width))
+  return dates.filter(
+    (date) =>
+      !paired.includes(date) &&
+      !dates.some((other) => other !== date && verticalOverlap(other, lineBand([date])) > 0) &&
+      centerY(date) > top &&
+      centerY(date) < bottom &&
+      Math.abs(date.x + date.width / 2 - column) < width &&
+      !packs.some((pack) => Math.abs(centerY(pack) - centerY(date)) < pitch * 0.5),
+  )
 }
 
 /**

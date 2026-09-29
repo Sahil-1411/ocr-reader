@@ -161,9 +161,7 @@ export default function App() {
             <div className="card__body" style={{ display: 'grid', gap: 14 }}>
               <Dropzone onFile={onFile} disabled={busy} />
               <canvas ref={previewRef} className="preview" hidden={!hasPreview} />
-              {(busy || Object.keys(stages).length > 0) && (
-                <StageProgress stages={stages} running={busy} />
-              )}
+              {busy && <StageProgress stages={stages} />}
               {error && (
                 <div className="banner banner--err">
                   <div>

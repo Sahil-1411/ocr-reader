@@ -318,12 +318,6 @@ button {
    Progress
    -------------------------------------------------------------------------- */
 
-.progress {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .progress__track {
   height: 5px;
   border-radius: 3px;
@@ -336,54 +330,6 @@ button {
   background: var(--accent);
   border-radius: 3px;
   transition: width 180ms ease;
-}
-
-.stages {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.stage-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--bg-sunken);
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
-  white-space: nowrap;
-}
-
-.stage-chip--start {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.stage-chip--done {
-  border-color: transparent;
-  color: var(--ok);
-  background: var(--ok-soft);
-}
-
-.stage-chip--skip {
-  color: var(--text-faint);
-  text-decoration: line-through;
-}
-
-.stage-chip--error {
-  border-color: transparent;
-  color: var(--err);
-  background: var(--err-soft);
-}
-
-.stage-chip__ms {
-  opacity: 0.65;
-  font-variant-numeric: tabular-nums;
 }
 
 /* --------------------------------------------------------------------------

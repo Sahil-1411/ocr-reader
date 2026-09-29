@@ -24,3 +24,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Real retailer receipts used for local testing — contain a live retailer ID
+# and financial figures, so they are deliberately not committed.
+public/samples/
+
+# Ground truth transcribes those same receipts line by line — the retailer's
+# pack codes, settled dates and weekly figures — so committing it would put back
+# exactly what excluding the images keeps out. Keep it local, or rebuild it from
+# a redacted receipt before committing.
+tools/fixtures/ground-truth.json
+
+# Reader output: the contents of whatever receipt was last read.
+tools/out/
+
+# Python virtualenv for tools/
+.venv/
+__pycache__/

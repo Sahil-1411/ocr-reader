@@ -26,7 +26,13 @@ export function FieldsView({ result, reviewThreshold = 0.55 }: FieldsViewProps) 
   const confidences = rowConfidences(result)
   // The widest column is the free-text one: Name, or the invoice's label.
   const wide = result.kind === 'invoice' ? 0 : 1
-  const flagged = new Set(result.validation.flatMap((issue) => issue.rows))
+  // A count solved from TOTALS is known, just not read; the rest need a look.
+  const solved = new Set(
+    result.validation.filter((issue) => issue.code === 'inventory-solved').flatMap((issue) => issue.rows),
+  )
+  const flagged = new Set(
+    result.validation.filter((issue) => issue.code !== 'inventory-solved').flatMap((issue) => issue.rows),
+  )
   // Validation messages are already among the warnings; a Tesseract fallback is not.
   const { reader, warnings } = result.processingMeta
   const notices = [
@@ -68,11 +74,13 @@ export function FieldsView({ result, reviewThreshold = 0.55 }: FieldsViewProps) 
           <tbody>
             {cells.map((row, index) => {
               const confidence = confidences[index] ?? 0
-              const className = flagged.has(index)
+              const tone = flagged.has(index)
                 ? 'fields__row--flagged'
-                : confidence < reviewThreshold
+                : solved.has(index) || confidence < reviewThreshold
                   ? 'fields__row--low'
-                  : undefined
+                  : ''
+              const total = /^totals?$/i.test(row[wide] ?? '') ? 'fields__row--total' : ''
+              const className = [tone, total].filter(Boolean).join(' ') || undefined
               return (
                 <tr key={`${row.join('|')}-${index}`} className={className}>
                   {row.map((cell, cellIndex) => (

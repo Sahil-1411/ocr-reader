@@ -45,14 +45,6 @@ export function StageProgress({ stages, running }: StageProgressProps) {
           )
         })}
       </div>
-
-      {Object.entries(stages)
-        .filter(([, s]) => s?.status === 'skip' && s.message)
-        .map(([stage, s]) => (
-          <p key={stage} className="dropzone__hint" style={{ textAlign: 'left' }}>
-            <strong>{stage}</strong> skipped — {s!.message}
-          </p>
-        ))}
     </div>
   )
 }

@@ -135,10 +135,6 @@ function decodeViaImageElement(file: Blob): Promise<HTMLImageElement> {
   })
 }
 
-/** Copy `ImageData`, so a buffer can be transferred without losing the original. */
-export function cloneImageData(image: ImageData): ImageData {
-  return new ImageData(new Uint8ClampedArray(image.data), image.width, image.height)
-}
 
 /** Paint `ImageData` into a canvas element, resizing it to match. */
 export function drawImageDataTo(

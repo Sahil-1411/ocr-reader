@@ -93,7 +93,7 @@ export class OcrClient {
   async #checkPython(): Promise<string> {
     if (await pythonReaderHealthy(this.#pythonUrl)) {
       this.#pythonAvailable = true
-      return `python (${this.#pythonUrl})`
+      return this.#pythonUrl ? `python (${this.#pythonUrl})` : 'python'
     }
     this.#pythonAvailable = false
 

@@ -24,7 +24,7 @@ either:
 ```sh
 brew install uv
 uv venv --python 3.12 .venv
-uv pip install -r tools/requirements.txt
+uv pip install -r python/requirements.txt
 ```
 
 Then run everything through `.venv/bin/python`.
@@ -51,23 +51,23 @@ outside it.
 ## Use
 
 ```sh
-mkdir -p tools/out
+mkdir -p frontend/tools/out
 
-.venv/bin/python tools/read_receipt.py public/samples/weekly-invoice.jpg \
-  > tools/out/weekly-invoice.jpg.words.json
+.venv/bin/python python/read_receipt.py frontend/public/samples/weekly-invoice.jpg \
+  > frontend/tools/out/weekly-invoice.jpg.words.json
 
-npx vitest run tools/score.test.ts
+pnpm --dir frontend exec vitest run tools/score.test.ts
 ```
 
 All three at once:
 
 ```sh
-mkdir -p tools/out
-for s in public/samples/*.jpg; do
-  .venv/bin/python tools/read_receipt.py "$s" --scales 1 2 \
-    > "tools/out/$(basename "$s").words.json"
+mkdir -p frontend/tools/out
+for s in frontend/public/samples/*.jpg; do
+  .venv/bin/python python/read_receipt.py "$s" --scales 1 2 \
+    > "frontend/tools/out/$(basename "$s").words.json"
 done
-npx vitest run tools/score.test.ts
+pnpm --dir frontend exec vitest run tools/score.test.ts
 ```
 
 Useful flags:
@@ -123,25 +123,30 @@ key.
 
 ## Serving the reader to the app
 
-`serve.py` puts the same reader behind a localhost endpoint so the browser app
-can use it. Set the app's reader to `python` (the default) and start it:
+`serve.py` puts the same reader behind an HTTP endpoint so the browser app
+can use it. Set the app's reader to `python` (the default) and start it from
+the repo root:
 
 ```sh
-.venv/bin/python tools/serve.py --warm
+.venv/bin/python python/serve.py --warm
 ```
 
+The page calls `/read` on its own host. Vite forwards that to `127.0.0.1:8756`.
 `--warm` builds the models at startup rather than on the first read, which
 otherwise costs about 25 seconds on the first receipt.
 
 ```
-browser: image → PNG → POST 127.0.0.1:8756/read
+browser: image → PNG → POST /read
 python:  decode → watermark suppression → PP-OCR → word boxes
 browser: rows.ts → validation → JSON
 ```
 
-Standard library only — no Flask, no FastAPI. It binds to `127.0.0.1`, refuses
-any `Origin` outside the dev and preview servers, and writes nothing to disk, so
-receipts stay on the machine.
+Standard library only — no Flask, no FastAPI. It binds to `127.0.0.1` unless
+you pass `--live`, which serves `frontend/dist` and `/read` on `0.0.0.0:8080`.
+A browser `Origin` is accepted when it is a dev server, the same host as this
+process, or listed with `--origin`. It writes nothing to disk.
+
+To put the site on a server, see the root README.
 
 Python does its own watermark suppression, so the app skips its pass when this
 reader is in use rather than running every stroke through the ink ramp twice.
@@ -160,7 +165,7 @@ lsof -ti tcp:8756 | xargs kill   # stop it
 ## How the scoring works
 
 `read_receipt.py` deliberately stops at word boxes. Row assembly stays in
-`src/ocr/layout/rows.ts`, which is tested and which a second implementation would
+`frontend/src/ocr/layout/rows.ts`, which is tested and which a second implementation would
 only drift from. `score.test.ts` feeds the Python words through those same
 builders, so both readers are scored through identical downstream code and a
 difference in the score is a difference in *reading*.
@@ -176,8 +181,8 @@ ramp's 38. Without a score it would have shipped.
 ## Privacy
 
 `fixtures/ground-truth.json` transcribes the receipts line by line — the
-retailer's pack codes, settled dates and weekly figures. `public/samples/` is
-gitignored for exactly that reason, so the fixture and `tools/out/` are ignored
+retailer's pack codes, settled dates and weekly figures. `frontend/public/samples/` is
+gitignored for exactly that reason, so the fixture and `frontend/tools/out/` are ignored
 too. Rebuild them from a redacted receipt before committing anything here.
 
 ## What this cannot do
@@ -193,7 +198,7 @@ alone:
 - **Algebra.** The `TOTALS` row states each column's sum. With exactly one
   unreadable value in a column it is solved rather than guessed:
   `missing = total − sum(readable)`. `solveInventoryCounts` in
-  `src/ocr/receipt/validate.ts` does this and reports each fill as
+  `frontend/src/ocr/receipt/validate.ts` does this and reports each fill as
   `inventory-solved`; counts it cannot solve stay empty under `inventory-unread`.
 - **Targeted re-read.** Crop a failing row at high resolution and read it again
   with a digits-only charset. Cheap: it is a handful of rows, not the page.

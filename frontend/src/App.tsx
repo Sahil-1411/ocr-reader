@@ -63,6 +63,7 @@ export default function App() {
   const [pageErrors, setPageErrors] = useState<ReadonlyMap<number, string>>(new Map())
   const [error, setError] = useState<string | null>(null)
   const [readerReady, setReaderReady] = useState(false)
+  const [readerName, setReaderName] = useState<string | null>(null)
   const [hasPreview, setHasPreview] = useState(false)
   const [previewData, setPreviewData] = useState<ImageData | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
@@ -86,7 +87,10 @@ export default function App() {
   const client = useMemo(
     () =>
       new OcrClient(options, {
-        onReady: () => setReaderReady(true),
+        onReady: (name) => {
+          setReaderName(name)
+          setReaderReady(true)
+        },
         onFatal: (e) => setError(e.message),
       }),
     [],
@@ -377,6 +381,7 @@ export default function App() {
   )
 
   const busy = phase === 'running' || phase === 'booting'
+  const onDevice = readerName?.startsWith('tesseract') ?? false
 
   return (
     <div className="app">
@@ -394,18 +399,24 @@ export default function App() {
           <div>
             <div className="app__title-row">
               <h1 className="app__title">Receipt OCR</h1>
-              <span className="app__badge">Fast On-Device</span>
+              <span className="app__badge">{onDevice ? 'On this device' : 'OCR server'}</span>
             </div>
             <p className="app__subtitle">
-              Instant lottery & receipt reader. All processing happens on your device — 100% private.
+              Instant lottery and receipt reader.
+              {onDevice
+                ? ' This fallback reads the page in the browser.'
+                : ' Photos are sent to the OCR server for this site.'}
             </p>
           </div>
         </div>
 
         <div className="app__controls">
-          <div className="privacy-pill" title="No network transmission for OCR">
+          <div
+            className="privacy-pill"
+            title={onDevice ? 'Tesseract is reading the page in this browser' : 'The Python reader on this site reads the photo'}
+          >
             <span className="privacy-dot" />
-            <span className="privacy-text">Private & Offline</span>
+            <span className="privacy-text">{onDevice ? 'In the browser' : 'OCR server'}</span>
           </div>
 
           <div className="segmented" role="group" aria-label="Theme selector">

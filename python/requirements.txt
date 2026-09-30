@@ -1,7 +1,7 @@
-# Reader dependencies for tools/read_receipt.py
+# Reader dependencies for python/read_receipt.py
 #
 # Install into a 3.12 virtualenv, not into the system or Homebrew Python — see
-# the setup section of tools/README.md for why.
+# the setup section of python/README.md for why.
 
 # PP-OCR's ONNX models without PaddlePaddle. Pure Python; onnxruntime does the work.
 rapidocr-onnxruntime>=1.3,<2

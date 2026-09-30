@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Serve the PP-OCR reader to the browser app over localhost.
+Serve the PP-OCR reader to the browser app.
 
 The app reads receipts in the browser with Tesseract. PP-OCR reads them more
 accurately — measured against `fixtures/ground-truth.json`, all 48 inventory
@@ -10,14 +10,15 @@ minutes on its 10 MB synchronous WASM init. This puts the reader where it works
 and hands the words back.
 
 Standard library only, deliberately. A framework would be one more thing to
-install for what is a single endpoint, and this has no business being reachable
-from anywhere but the machine it runs on.
+install for what is a single endpoint.
 
-    .venv/bin/python tools/serve.py
-    # then set the app's reader to 'python'
+    .venv/bin/python python/serve.py --warm          # dev, 127.0.0.1:8756
+    .venv/bin/python python/serve.py --live --warm   # public, serves frontend/dist
 
-Receipts do not leave the machine: the server binds to 127.0.0.1, refuses
-requests from anywhere else, and writes nothing to disk.
+Dev stays on localhost. `--live` binds every interface and serves the built
+frontend next to `/read`, so a browser on another machine can use the site.
+Uploaded receipts are then processed on this machine. The server still writes
+nothing to disk.
 """
 
 from __future__ import annotations
@@ -26,10 +27,15 @@ import argparse
 import errno
 import io
 import json
+import mimetypes
+import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -41,9 +47,9 @@ from read_receipt import (  # noqa: E402
     suppress_colored_watermark,
 )
 
-# Only the dev server and a preview build. An `Origin` outside this list is
-# refused rather than answered, so a page the user happens to have open cannot
-# quietly post their receipts at this port.
+# Dev server and preview. A live site is allowed when its Origin host matches
+# the Host header (the page and `/read` are the same server), or when passed
+# with `--origin`. Anything else is refused.
 ALLOWED_ORIGINS = {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -55,7 +61,15 @@ ALLOWED_ORIGINS = {
 
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_STATIC = REPO_ROOT / "frontend" / "dist"
+
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("text/javascript", ".mjs")
+
 _engine = None
+_static_root: Path | None = None
+_extra_origins: set[str] = set()
 
 
 def engine():
@@ -84,19 +98,24 @@ class Handler(BaseHTTPRequestHandler):
     def _origin_ok(self) -> bool:
         origin = self.headers.get("Origin")
         # A direct call (curl, the health check) sends no Origin; a browser
-        # always does, and then it has to be one we know.
-        return origin is None or origin in ALLOWED_ORIGINS
+        # always does, and then it has to be this site or a known dev server.
+        if origin is None or origin in ALLOWED_ORIGINS or origin in _extra_origins:
+            return True
+        return _same_site(origin, self.headers.get("Host"))
 
     def _send(self, status: int, payload: dict, origin: str | None) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
-        if origin in ALLOWED_ORIGINS:
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
+        self._allow_origin(origin)
         self.end_headers()
         self.wfile.write(body)
+
+    def _allow_origin(self, origin: str | None) -> None:
+        if origin and self._origin_ok():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
 
     def log_message(self, fmt: str, *args) -> None:
         # The default logs every request to stderr with the client address;
@@ -108,7 +127,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin")
         self.send_response(204)
-        if origin in ALLOWED_ORIGINS:
+        if origin and self._origin_ok():
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -119,10 +138,35 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin")
-        if self.path != "/health":
-            self._send(404, {"error": "not found"}, origin)
+        path = self.path.split("?", 1)[0]
+        if path == "/health":
+            if not self._origin_ok():
+                self._send(403, {"error": "origin not allowed"}, origin)
+                return
+            self._send(200, {"status": "ok", "reader": "pp-ocr"}, origin)
             return
-        self._send(200, {"status": "ok", "reader": "pp-ocr"}, origin)
+        if self._serve_static(path):
+            return
+        self._send(404, {"error": "not found"}, origin)
+
+    def _serve_static(self, url_path: str) -> bool:
+        if _static_root is None:
+            return False
+        target = _resolve_static(url_path)
+        # A route with no file extension is the single-page app. A missing
+        # script or image should stay a 404.
+        if target is None and "." not in Path(url_path).name:
+            target = _resolve_static("/index.html")
+        if target is None:
+            return False
+        body = target.read_bytes()
+        mime, _ = mimetypes.guess_type(target.name)
+        self.send_response(200)
+        self.send_header("Content-Type", mime or "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return True
 
     def do_POST(self) -> None:  # noqa: N802
         origin = self.headers.get("Origin")
@@ -172,9 +216,6 @@ class Handler(BaseHTTPRequestHandler):
 
 def _already_serving(port: int) -> bool:
     """Whether the thing holding the port is another copy of this reader."""
-    import urllib.error
-    import urllib.request
-
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2) as response:
             return json.loads(response.read()).get("reader") == "pp-ocr"
@@ -182,9 +223,76 @@ def _already_serving(port: int) -> bool:
         return False
 
 
+def _same_site(origin: str, host_header: str | None) -> bool:
+    """True when the browser page is this server, not some other website."""
+    if not host_header:
+        return False
+    netloc = urlparse(origin).netloc
+    if netloc == host_header:
+        return True
+
+    def bare(value: str) -> str:
+        host = value.rsplit("@", 1)[-1]
+        if host.startswith("[") and "]" in host:
+            return host[1 : host.index("]")]
+        if host.count(":") == 1:
+            return host.rsplit(":", 1)[0]
+        return host
+
+    return bare(netloc) == bare(host_header) and bare(netloc) != ""
+
+
+def _resolve_static(url_path: str) -> Path | None:
+    if _static_root is None:
+        return None
+    raw = url_path.split("?", 1)[0]
+    if raw in ("", "/"):
+        raw = "/index.html"
+    if "\\" in raw or raw.startswith("//"):
+        return None
+    root = _static_root.resolve()
+    candidate = (root / raw.lstrip("/")).resolve()
+    if not candidate.is_relative_to(root):
+        return None
+    if candidate.is_dir():
+        candidate = candidate / "index.html"
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _extra_from_env() -> set[str]:
+    raw = os.environ.get("OCR_ALLOWED_ORIGINS", "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def main() -> int:
+    global _static_root, _extra_origins
+
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=8756)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="interface to bind (default 127.0.0.1, or 0.0.0.0 with --live)",
+    )
+    parser.add_argument(
+        "--static",
+        type=Path,
+        default=None,
+        help="directory of the built frontend (default frontend/dist with --live)",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="bind 0.0.0.0 and serve frontend/dist on the same port as /read",
+    )
+    parser.add_argument(
+        "--origin",
+        action="append",
+        default=[],
+        help="extra browser Origin to allow, repeatable (or set OCR_ALLOWED_ORIGINS)",
+    )
     parser.add_argument(
         "--warm",
         action="store_true",
@@ -192,25 +300,39 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    host = args.host or ("0.0.0.0" if args.live else "127.0.0.1")
+    port = args.port if args.port is not None else (8080 if args.live else 8756)
+    static = args.static if args.static is not None else (DEFAULT_STATIC if args.live else None)
+    if static is not None:
+        static = static.resolve()
+        if not (static / "index.html").is_file():
+            print(
+                f"No built frontend at {static}.\n"
+                "Build it with:  pnpm --dir frontend build",
+                file=sys.stderr,
+            )
+            return 1
+        _static_root = static
+    _extra_origins = _extra_from_env() | set(args.origin)
+
     # Bind before loading the models. Warming first means a good half minute of
     # work is thrown away when the port turns out to be taken — which it usually
     # is because the reader is already running and doing its job.
     try:
-        # 127.0.0.1, not 0.0.0.0: these are someone's receipts.
-        server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
+        server = ThreadingHTTPServer((host, port), Handler)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise
-        if _already_serving(args.port):
+        if _already_serving(port):
             print(
-                f"A reader is already listening on port {args.port} — nothing to do.\n"
-                f"Stop it with:  lsof -ti tcp:{args.port} | xargs kill",
+                f"A reader is already listening on port {port} — nothing to do.\n"
+                f"Stop it with:  lsof -ti tcp:{port} | xargs kill",
                 file=sys.stderr,
             )
             return 0
         print(
-            f"Port {args.port} is in use by something that is not this reader.\n"
-            f"Pick another with --port, or find the holder:  lsof -nP -iTCP:{args.port} -sTCP:LISTEN",
+            f"Port {port} is in use by something that is not this reader.\n"
+            f"Pick another with --port, or find the holder:  lsof -nP -iTCP:{port} -sTCP:LISTEN",
             file=sys.stderr,
         )
         return 1
@@ -218,7 +340,12 @@ def main() -> int:
     if args.warm:
         engine()
 
-    print(f"reader listening on http://127.0.0.1:{args.port}  (POST /read)", flush=True)
+    shown = "127.0.0.1" if host == "0.0.0.0" else host
+    print(f"reader listening on http://{shown}:{port}  (POST /read)", flush=True)
+    if _static_root is not None:
+        print(f"frontend from {_static_root}", flush=True)
+    if host == "0.0.0.0":
+        print("open to the network — receipts uploaded here are read on this machine", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

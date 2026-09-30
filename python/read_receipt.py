@@ -14,18 +14,18 @@ recovers. There is no such problem here.
 
 What this deliberately does NOT do
 ----------------------------------
-Assemble rows. `src/ocr/layout/rows.ts` already does that, it is tested, and a
+Assemble rows. `frontend/src/ocr/layout/rows.ts` already does that, it is tested, and a
 second implementation would drift from it. This emits the same `WordBox` shape
-the TypeScript reader emits, so `tools/score.test.ts` can feed it straight into
+the TypeScript reader emits, so `frontend/tools/score.test.ts` can feed it straight into
 the real row builders. That also keeps the comparison honest: both readers are
 scored through identical downstream code, so a difference in the score is a
 difference in reading.
 
 Usage
 -----
-    python3 tools/read_receipt.py public/samples/weekly-invoice.jpg > words.json
-    python3 tools/read_receipt.py --no-suppress IMAGE   # skip the watermark pass
-    python3 tools/read_receipt.py --scales 1 2          # ensemble over upscales
+    .venv/bin/python python/read_receipt.py frontend/public/samples/weekly-invoice.jpg > words.json
+    .venv/bin/python python/read_receipt.py --no-suppress IMAGE   # skip the watermark pass
+    .venv/bin/python python/read_receipt.py --scales 1 2          # ensemble over upscales
 """
 
 from __future__ import annotations

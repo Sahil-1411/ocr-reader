@@ -1,6 +1,6 @@
 /**
  * Pair words into the receipt JSON. No image work lives here, so the same
- * builders serve both readers and `tools/score.test.ts`.
+ * builders serve both readers and `frontend/tools/score.test.ts`.
  */
 
 import { isLotteryHeader, readColumnTable, type ColumnGuide } from '../layout/columns'

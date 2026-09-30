@@ -5,9 +5,9 @@
  * already has; it is a report, not a pass/fail gate, and asserts only that the
  * files it needs exist. Run it with:
  *
- *     python3 tools/read_receipt.py public/samples/weekly-invoice.jpg \
- *       > tools/out/weekly-invoice.words.json
- *     npx vitest run tools/score.test.ts
+ *     .venv/bin/python python/read_receipt.py frontend/public/samples/weekly-invoice.jpg \
+ *       > frontend/tools/out/weekly-invoice.words.json
+ *     pnpm --dir frontend exec vitest run tools/score.test.ts
  *
  * The point of routing Python's words through the real row builders rather than
  * reimplementing them is that both readers are then scored through identical
@@ -28,7 +28,7 @@ import {
 } from '../src/ocr/layout/rows'
 
 const ROOT = join(import.meta.dirname, '..')
-/** `SCORE_OUT=tools/out-new npx vitest run tools/score.test.ts` scores another directory. */
+/** `SCORE_OUT=tools/out-new pnpm --dir frontend exec vitest run tools/score.test.ts` scores another directory. */
 const OUT = process.env.SCORE_OUT ? join(ROOT, process.env.SCORE_OUT) : join(import.meta.dirname, 'out')
 const truth = JSON.parse(
   readFileSync(join(import.meta.dirname, 'fixtures', 'ground-truth.json'), 'utf8'),
@@ -192,7 +192,7 @@ describe('reader score against ground truth', () => {
     if (!existsSync(OUT)) {
       console.log(
         '\nNo tools/out — nothing to score yet. Produce some with:\n' +
-          '  python3 tools/read_receipt.py public/samples/<image> > tools/out/<image>.words.json\n',
+          '  .venv/bin/python python/read_receipt.py frontend/public/samples/<image> > frontend/tools/out/<image>.words.json\n',
       )
       return
     }

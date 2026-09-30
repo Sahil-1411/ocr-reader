@@ -165,7 +165,7 @@ export interface ProgressEvent {
 /**
  * Which reader turns the page into words.
  *
- * `python` sends the image to `tools/serve.py` on localhost, which reads it with
+ * `python` sends the image to `python/serve.py`, which reads it with
  * PP-OCR — the more accurate of the two. When the server is not running the
  * client says so and falls back to `tesseract`, which runs entirely from files
  * served with the app.

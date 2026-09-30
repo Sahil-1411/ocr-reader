@@ -4,7 +4,7 @@
     {
       "name": "ocr-reader",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev", "--port", "5273", "--strictPort"],
+      "runtimeArgs": ["--dir", "frontend", "dev", "--port", "5273", "--strictPort"],
       "port": 5273
     }
   ]

@@ -11,7 +11,7 @@
 /* -------------------------------------------------------------------------- */
 
 /** Which receipt was read. Each kind has its own row shape. */
-export type ReceiptKind = 'inventory' | 'settlements' | 'invoice'
+export type ReceiptKind = 'inventory' | 'settlements' | 'invoice' | 'table'
 
 /** One weekly-invoice line: a description and an amount. */
 export interface ReceiptField {
@@ -28,6 +28,23 @@ export interface SettlementRow {
   dateSettled: string
   /** Mean word confidence in [0, 1]. Omitted from the public JSON. */
   confidence: number
+}
+
+/**
+ * One row of a multi-column document, cells left to right under the printed
+ * header. Used for wholesale invoices and other tables that are not a lottery
+ * ticket.
+ */
+export interface TableRow {
+  cells: string[]
+  /** Mean word confidence in [0, 1]. Omitted from the public JSON. */
+  confidence: number
+  /**
+   * A line printed among the items that is not one, such as the reason
+   * `***DAMAGED IN TRANSIT***` above a credited item. Kept as its own row, as
+   * printed, with only its column filled.
+   */
+  label?: boolean
 }
 
 /**
@@ -106,6 +123,13 @@ export interface OcrResult {
   settlements: SettlementRow[]
   /** Invoice lines. Filled when {@link kind} is `invoice`. */
   fields: ReceiptField[]
+  /** Column-aligned rows. Filled when {@link kind} is `table`. */
+  tableRows: TableRow[]
+  /**
+   * Left edge of each printed column, in page pixels. Present for a column
+   * table so a later page of the same PDF can reuse the header.
+   */
+  columnBounds?: number[]
   /**
    * Places where the reading contradicts the receipt's own arithmetic, or where
    * a count was solved from TOTALS or could not be read. Empty means every
@@ -141,7 +165,7 @@ export interface ProgressEvent {
 /**
  * Which reader turns the page into words.
  *
- * `python` sends the image to `tools/serve.py` on localhost, which reads it with
+ * `python` sends the image to `python/serve.py`, which reads it with
  * PP-OCR — the more accurate of the two. When the server is not running the
  * client says so and falls back to `tesseract`, which runs entirely from files
  * served with the app.

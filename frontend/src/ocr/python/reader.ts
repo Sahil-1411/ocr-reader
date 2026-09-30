@@ -1,5 +1,5 @@
 /**
- * Read a receipt through `tools/serve.py` on localhost.
+ * Read a receipt through `python/serve.py`.
  *
  * The Python reader exists because PP-OCR reads these receipts more accurately
  * than Tesseract and cannot run in the browser — see `ReaderEngine` in
@@ -9,17 +9,30 @@
  * the rows are still built by `layout/rows.ts`, which is tested and which a
  * second implementation would only drift from. That also means the two readers
  * are directly comparable, because everything downstream of them is identical —
- * `tools/score.test.ts` relies on exactly that.
+ * `frontend/tools/score.test.ts` relies on exactly that.
  *
  * Python also does its own watermark suppression (a port of
  * `receipt/color-watermark.ts`), so the caller sends the original image and
  * skips its own pass rather than cleaning the page twice.
+ *
+ * The default URL is empty: the browser calls `/read` on the same host. Vite
+ * proxies that to `127.0.0.1:8756` during development, and `--live` serves the
+ * built page and `/read` on one port. Set `VITE_PYTHON_READER_URL` when the
+ * API lives on a different host.
  */
 
 import type { WordBox } from '../layout/rows'
 
-/** Where `tools/serve.py` listens unless told otherwise. */
-export const DEFAULT_PYTHON_READER_URL = 'http://127.0.0.1:8756'
+/** Same origin, unless `VITE_PYTHON_READER_URL` names another host. */
+export const DEFAULT_PYTHON_READER_URL = readerBaseUrl()
+
+function readerBaseUrl(): string {
+  const configured = import.meta.env.VITE_PYTHON_READER_URL
+  if (typeof configured === 'string' && configured.length > 0) {
+    return configured.replace(/\/$/, '')
+  }
+  return ''
+}
 
 interface PythonReadResult {
   words: WordBox[]
@@ -30,8 +43,8 @@ interface PythonReadResult {
 export class PythonReaderUnavailableError extends Error {
   constructor(url: string, cause: string) {
     super(
-      `The Python reader at ${url} did not answer (${cause}). Start it with ` +
-        '`.venv/bin/python tools/serve.py`, or switch the reader back to Tesseract.',
+      `The Python reader${url ? ` at ${url}` : ''} did not answer (${cause}). From the repo root, start it with ` +
+        '`.venv/bin/python python/serve.py --warm`, or switch the reader back to Tesseract.',
     )
     this.name = 'PythonReaderUnavailableError'
   }

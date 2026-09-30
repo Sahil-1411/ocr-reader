@@ -6,6 +6,7 @@
  * pixels first; the Python reader does that itself.
  */
 
+import type { ColumnGuide } from './layout/columns'
 import type { WordBox } from './layout/rows'
 import {
   DEFAULT_PYTHON_READER_URL,
@@ -13,7 +14,7 @@ import {
   PythonReaderUnavailableError,
   readWithPython,
 } from './python/reader'
-import { assembleReceipt } from './receipt/assemble'
+import { assembleReceipt, rowCells } from './receipt/assemble'
 import { isWatermarkWord, suppressColoredWatermark } from './receipt/color-watermark'
 import { loadRecognizer, recognizeWords, terminateRecognizer } from './tesseract/engine'
 import { DEFAULT_OPTIONS, type OcrOptions, type OcrResult, type ProgressEvent } from './types'
@@ -92,7 +93,7 @@ export class OcrClient {
   async #checkPython(): Promise<string> {
     if (await pythonReaderHealthy(this.#pythonUrl)) {
       this.#pythonAvailable = true
-      return `python (${this.#pythonUrl})`
+      return this.#pythonUrl ? `python (${this.#pythonUrl})` : 'python'
     }
     this.#pythonAvailable = false
 
@@ -138,6 +139,7 @@ export class OcrClient {
     image: ImageData,
     callbacks: RunCallbacks = {},
     signal?: AbortSignal,
+    guide?: ColumnGuide | null,
   ): Promise<OcrResult> {
     if (this.#disposed) throw new Error('OcrClient has been disposed')
     if (signal?.aborted) throw new OcrCancelledError()
@@ -200,6 +202,7 @@ export class OcrClient {
           timingsMs: { watermark: watermarkMs, recognize: recognizeMs },
         },
         this.#options.rowOverlapRatio,
+        guide,
       )
       const assembleMs = now() - assembleStarted
       result.processingMeta.timingsMs.assemble = assembleMs
@@ -207,7 +210,7 @@ export class OcrClient {
       callbacks.onProgress?.({
         stage: 'assemble',
         status: 'done',
-        message: `${result.rows.length} rows`,
+        message: `${rowCells(result).length} rows`,
         elapsedMs: assembleMs,
       })
       this.#throwIfStale(token, signal)
@@ -223,6 +226,62 @@ export class OcrClient {
     } finally {
       signal?.removeEventListener('abort', onAbort)
     }
+  }
+
+  /**
+   * Build rows from words the PDF already contained.
+   *
+   * Skips watermark removal and OCR. The boxes are in the rendered page's
+   * pixel space, the same space a reader would have returned.
+   */
+  assembleFromWords(
+    words: readonly WordBox[],
+    sourceSize: { width: number; height: number },
+    callbacks: RunCallbacks = {},
+    signal?: AbortSignal,
+    guide?: ColumnGuide | null,
+  ): OcrResult {
+    if (this.#disposed) throw new Error('OcrClient has been disposed')
+    if (signal?.aborted) throw new OcrCancelledError()
+
+    this.#runToken += 1
+    callbacks.onProgress?.({ stage: 'init', status: 'done', message: 'using the PDF text' })
+    callbacks.onProgress?.({
+      stage: 'watermark',
+      status: 'skip',
+      message: 'digital text needs no cleanup',
+    })
+    callbacks.onProgress?.({
+      stage: 'recognize',
+      status: 'skip',
+      message: `${words.length} words from the PDF`,
+    })
+
+    const assembleStarted = now()
+    callbacks.onProgress?.({ stage: 'assemble', status: 'start', message: 'building rows…' })
+    const result = assembleReceipt(
+      words,
+      {
+        reader: 'pdf text',
+        watermarkSuppressed: false,
+        watermarkPixelRatio: 0,
+        sourceSize,
+        timingsMs: {},
+      },
+      this.#options.rowOverlapRatio,
+      guide,
+    )
+    const assembleMs = now() - assembleStarted
+    result.processingMeta.timingsMs.assemble = assembleMs
+    result.processingMeta.totalMs = assembleMs
+    callbacks.onProgress?.({
+      stage: 'assemble',
+      status: 'done',
+      message: `${rowCells(result).length} rows`,
+      elapsedMs: assembleMs,
+    })
+    if (signal?.aborted) throw new OcrCancelledError()
+    return result
   }
 
   #throwIfStale(token: number, signal: AbortSignal | undefined): void {

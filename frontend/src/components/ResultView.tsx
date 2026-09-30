@@ -54,6 +54,27 @@ function wideIndex(result: OcrResult): number {
   return description >= 0 ? description : 0
 }
 
+/** Columns whose readings are numbers, so a header and its cells line up alike. */
+function columnIsNumeric(result: OcrResult, index: number): boolean {
+  if (result.kind === 'table') return isNumericHeader(result.headers[index] ?? '')
+  return index !== wideIndex(result)
+}
+
+/** A column's class, which caps how wide its cells may grow. */
+function columnClass(result: OcrResult, index: number): ColumnClass {
+  if (columnIsNumeric(result, index)) return 'num'
+  return index === wideIndex(result) ? 'col--wide' : 'col--text'
+}
+
+type ColumnClass = 'num' | 'col--text' | 'col--wide'
+
+/** Characters a column's cells grow to before the reading is cut short on screen. */
+const CELL_CHARS: Record<ColumnClass, number> = {
+  num: 14,
+  'col--text': 20,
+  'col--wide': 34,
+}
+
 function rowIsIncomplete(result: OcrResult, row: readonly string[], index: number): boolean {
   if (isLabelRow(result, index)) return false
   if (result.kind === 'table') return row.filter((cell) => cell.trim()).length < 2
@@ -307,7 +328,7 @@ export function FieldsView({
                 {acrossPages && <th className="num th--seq th--page">Pg</th>}
                 <th className="num th--seq">#</th>
                 {headers.map((header, index) => (
-                  <th key={`${header}-${index}`} className={index === wideIndex(result) ? undefined : 'num'}>
+                  <th key={`${header}-${index}`} className={columnClass(result, index)}>
                     {header}
                   </th>
                 ))}
@@ -341,10 +362,10 @@ export function FieldsView({
                   <Fragment key={`${page.index}:${originalIndex}`}>
                     {retitle && (
                       <tr className="fields__retitle">
-                        <td className="td--seq" />
+                        <td className="td--seq td--page" />
                         <td className="td--seq" />
                         {ownHeaders.map((header, index) => (
-                          <td key={`${header}-${index}`} className={index === wide ? undefined : 'num'}>
+                          <td key={`${header}-${index}`} className={columnClass(own, index)}>
                             {header}
                           </td>
                         ))}
@@ -373,22 +394,26 @@ export function FieldsView({
                       </td>
                       {row.cells.map((cell, cellIndex) => {
                         const header = ownHeaders[cellIndex] ?? ''
-                        const numeric =
-                          own.kind === 'table' ? isNumericHeader(header) : cellIndex !== wide
+                        const column = columnClass(own, cellIndex)
                         // A label's other cells are blank on the page, not missing.
                         const isEmpty = cell.trim() === '' && !label
                         const isLowConfidence = confidence < reviewThreshold
+                        // Cells ask for the width of their reading, up to the column's cap,
+                        // so one long description cannot stretch the table past the card.
+                        const width = Math.min(Math.max(cell.length, header.length, 4), CELL_CHARS[column])
 
                         return (
                           <td
                             key={`${header}-${cellIndex}`}
-                            className={numeric ? 'num' : undefined}
+                            className={column}
                             title={row.edited ? 'Edited manually' : `Confidence: ${(confidence * 100).toFixed(0)}%`}
                           >
                             <input
                               className={`cell-input${isEmpty ? ' cell-input--empty' : ''}${isLowConfidence ? ' cell-input--low' : ''}`}
                               value={cell}
-                              size={Math.max(cell.length, header.length, 4)}
+                              size={width}
+                              // A reading too long for its column is cut short: hover shows all of it.
+                              title={cell.length > width ? cell : undefined}
                               placeholder={label ? '' : 'empty'}
                               aria-label={
                                 acrossPages

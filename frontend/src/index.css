@@ -321,7 +321,7 @@ button {
 
 @media (min-width: 900px) {
   .app__grid {
-    grid-template-columns: minmax(310px, 1fr) minmax(0, 1.35fr);
+    grid-template-columns: minmax(290px, 1fr) minmax(0, 1.5fr);
     align-items: start;
     gap: 20px;
   }
@@ -329,7 +329,7 @@ button {
 
 @media (min-width: 1100px) {
   .app__grid {
-    grid-template-columns: minmax(360px, 1fr) minmax(0, 1.55fr);
+    grid-template-columns: minmax(340px, 1fr) minmax(0, 1.8fr);
     gap: 24px;
   }
 }
@@ -1096,8 +1096,10 @@ button {
 
 .table-responsive {
   width: 100%;
-  max-width: none;
+  max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--bg-raised);
@@ -1119,7 +1121,7 @@ button {
 }
 
 .fields th {
-  padding: 9px 12px;
+  padding: 9px 10px;
   text-align: left;
   font-size: 11px;
   font-weight: 700;
@@ -1163,15 +1165,74 @@ button {
   white-space: nowrap;
 }
 
+/* Each row's own surface, so the pinned columns stay opaque as the rest scrolls
+   under them. The status tones are translucent, hence the opaque colour beneath. */
+.fields tbody tr {
+  --row-bg: var(--bg-raised);
+}
+
+.fields tbody tr:hover {
+  --row-bg: var(--bg-sunken);
+}
+
+.fields tbody tr.fields__row--low,
+.fields tbody tr.fields__row--low:hover {
+  --row-bg: var(--warn-soft);
+}
+
+.fields tbody tr.fields__row--flagged,
+.fields tbody tr.fields__row--flagged:hover {
+  --row-bg: var(--err-soft);
+}
+
+.fields tbody tr.fields__row--edited,
+.fields tbody tr.fields__row--edited:hover {
+  --row-bg: var(--ok-soft);
+}
+
+.fields tbody tr.fields__row--total,
+.fields tbody tr.fields__retitle {
+  --row-bg: var(--bg-sunken);
+}
+
+/* The row number stays in view while the columns scroll sideways. */
 .fields th.th--seq,
 .fields td.td--seq {
-  width: 38px;
+  position: sticky;
+  left: 0;
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  padding-left: 6px;
   padding-right: 6px;
   text-align: center;
   color: var(--text-faint);
   font-family: var(--mono);
   font-size: 11px;
   user-select: none;
+}
+
+.fields th.th--seq {
+  z-index: 3;
+  background: var(--bg-sunken);
+}
+
+.fields td.td--seq {
+  z-index: 2;
+  background-color: var(--bg-raised);
+  background-image: linear-gradient(var(--row-bg), var(--row-bg));
+}
+
+/* A search across pages puts the page number first; the row number follows it. */
+.fields th.th--seq:nth-child(2),
+.fields td.td--seq:nth-child(2) {
+  left: 40px;
+}
+
+/* The row number carries the edge between the pinned columns and the scrolling ones. */
+.fields th.th--seq:not(.th--page),
+.fields td.td--seq:not(.td--page) {
+  box-shadow: 1px 0 0 var(--border);
 }
 
 .fields th.num,
@@ -1181,8 +1242,13 @@ button {
   white-space: nowrap;
 }
 
+.fields th.col--wide,
+.fields th.col--text {
+  text-align: left;
+}
+
 .fields td {
-  padding: 7px 10px;
+  padding: 7px 8px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
   white-space: nowrap;
@@ -1233,10 +1299,12 @@ button {
   font-style: italic;
 }
 
-/* Cell Inputs */
+/* Cell Inputs — each grows to its reading, then stops at its column's cap. */
 .cell-input {
   width: auto;
-  max-width: none;
+  min-width: 4ch;
+  max-width: 14ch;
+  text-overflow: ellipsis;
   field-sizing: content;
   padding: 3px 6px;
   margin: -3px -6px;
@@ -1247,6 +1315,17 @@ button {
   font: inherit;
   text-align: inherit;
   transition: all 100ms ease;
+}
+
+/* Item numbers, codes and the like. */
+.fields td.col--text .cell-input {
+  max-width: 20ch;
+}
+
+/* The description: the one column long enough to stretch the table, so it is
+   capped against the viewport and cut short with an ellipsis beyond that. */
+.fields td.col--wide .cell-input {
+  max-width: clamp(16ch, 24vw, 36ch);
 }
 
 .cell-input:hover:not(:read-only) {
@@ -1451,6 +1530,10 @@ button {
 
   .search-box {
     max-width: 240px;
+  }
+
+  .fields td.col--wide .cell-input {
+    max-width: clamp(14ch, 34vw, 30ch);
   }
 }
 
@@ -1671,13 +1754,32 @@ button {
 
   .fields th.th--seq,
   .fields td.td--seq {
-    width: 26px;
+    width: 30px;
+    min-width: 30px;
+    max-width: 30px;
     font-size: 10px;
-    padding-right: 2px;
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  .fields th.th--seq:nth-child(2),
+  .fields td.td--seq:nth-child(2) {
+    left: 30px;
   }
 
   .cell-input {
     padding: 3px 4px;
+    /* Matches the padding, so a cell never spills over its neighbour. */
+    margin: -3px -4px;
+    max-width: 12ch;
+  }
+
+  .fields td.col--text .cell-input {
+    max-width: 16ch;
+  }
+
+  .fields td.col--wide .cell-input {
+    max-width: clamp(12ch, 44vw, 26ch);
   }
 
   /* Banner Slim on Mobile */
@@ -1735,6 +1837,28 @@ button {
 @media (max-width: 440px) {
   .privacy-text {
     display: none;
+  }
+
+  /* Search and tabs on one row, the ticket's title and count on the next. */
+  .table-controls {
+    flex-wrap: wrap;
+  }
+
+  .table-controls__start,
+  .table-controls__end {
+    flex: 1 1 100%;
+  }
+
+  .table-controls__end {
+    justify-content: flex-start;
+  }
+
+  .filter-tabs {
+    max-width: none;
+  }
+
+  .kind-badge {
+    max-width: none;
   }
 
   .segmented__label {

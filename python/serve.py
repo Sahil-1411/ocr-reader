@@ -29,7 +29,9 @@ import io
 import json
 import mimetypes
 import os
+import signal
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -88,6 +90,13 @@ def decode_image(raw: bytes) -> np.ndarray:
 
     with Image.open(io.BytesIO(raw)) as image:
         return np.asarray(image.convert("RGB"))
+
+
+class Server(ThreadingHTTPServer):
+    # A restart should be able to bind the port while the previous socket is
+    # still in TIME_WAIT, and a stop should not wait on a stuck read.
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -319,7 +328,7 @@ def main() -> int:
     # work is thrown away when the port turns out to be taken — which it usually
     # is because the reader is already running and doing its job.
     try:
-        server = ThreadingHTTPServer((host, port), Handler)
+        server = Server((host, port), Handler)
     except OSError as error:
         if error.errno != errno.EADDRINUSE:
             raise
@@ -346,10 +355,17 @@ def main() -> int:
         print(f"frontend from {_static_root}", flush=True)
     if host == "0.0.0.0":
         print("open to the network — receipts uploaded here are read on this machine", flush=True)
+
+    def stop(_signum: int, _frame: object) -> None:
+        print("\nstopping", flush=True)
+        # shutdown() waits for serve_forever() to return, so it has to run on
+        # another thread or this process deadlocks on Ctrl-C and on Docker stop.
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
     try:
         server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nstopping", flush=True)
     finally:
         server.server_close()
     return 0

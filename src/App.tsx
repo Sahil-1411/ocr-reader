@@ -10,7 +10,7 @@ import { isPdf, pdfToImages, type PdfPage } from './lib/pdf-to-images'
 import { textLayerIsUsable } from './lib/pdf-text'
 import { OcrCancelledError, OcrClient } from './ocr/client'
 import type { ColumnGuide } from './ocr/layout/columns'
-import { toPublicJson, withCell } from './ocr/receipt/assemble'
+import { withCell } from './ocr/receipt/assemble'
 import { DEFAULT_OPTIONS, type OcrResult, type ProgressEvent } from './ocr/types'
 
 type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
@@ -33,18 +33,34 @@ function resultTitle(result: OcrResult): string {
   }
 }
 
+const NO_EDITS: ReadonlySet<number> = new Set()
+
 const THEMES: { value: ThemePreference; label: string; icon: string }[] = [
   { value: 'system', label: 'System', icon: 'monitor' },
   { value: 'light', label: 'Light', icon: 'sun' },
   { value: 'dark', label: 'Dark', icon: 'moon' },
 ]
 
+/** One page's reading: as read, as edited, and which rows were edited. */
+interface PageRead {
+  result: OcrResult
+  readResult: OcrResult
+  edited: ReadonlySet<number>
+}
+
+/** A table's columns, to read the next page by when it prints no header of its own. */
+function guideFrom(result: OcrResult): ColumnGuide | null {
+  return result.kind === 'table' && result.columnBounds?.length === result.headers.length
+    ? { headers: result.headers, bounds: result.columnBounds }
+    : null
+}
+
 export default function App() {
   const [phase, setPhase] = useState<Phase>('idle')
   const [stages, setStages] = useState<StageMap>({})
-  const [result, setResult] = useState<OcrResult | null>(null)
-  const [readResult, setReadResult] = useState<OcrResult | null>(null)
-  const [edited, setEdited] = useState<ReadonlySet<number>>(new Set())
+  // Every page read so far, by page index. An image is page 0 of one.
+  const [pages, setPages] = useState<ReadonlyMap<number, PageRead>>(new Map())
+  const [pageErrors, setPageErrors] = useState<ReadonlyMap<number, string>>(new Map())
   const [error, setError] = useState<string | null>(null)
   const [readerReady, setReaderReady] = useState(false)
   const [hasPreview, setHasPreview] = useState(false)
@@ -56,23 +72,16 @@ export default function App() {
   // PDF multi-page state
   const [pdfPages, setPdfPages] = useState<PdfPage[]>([])
   const [currentPage, setCurrentPage] = useState(0)
-  const [pdfResults, setPdfResults] = useState<Map<number, { result: OcrResult; readResult: OcrResult }>>(new Map())
   const [isPdfMode, setIsPdfMode] = useState(false)
   const [pdfProcessingPage, setPdfProcessingPage] = useState<number | null>(null)
 
   const options = useMemo(() => DEFAULT_OPTIONS, [])
   const previewRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const columnGuideRef = useRef<ColumnGuide | null>(null)
-  const rememberColumns = (result: OcrResult) => {
-    if (
-      result.kind === 'table' &&
-      result.columnBounds &&
-      result.columnBounds.length === result.headers.length
-    ) {
-      columnGuideRef.current = { headers: result.headers, bounds: result.columnBounds }
-    }
-  }
+
+  const current = pages.get(currentPage)
+  const result = current?.result ?? null
+  const edited = current?.edited ?? NO_EDITS
 
   const client = useMemo(
     () =>
@@ -95,21 +104,22 @@ export default function App() {
     }
   }, [previewData, hasPreview])
 
+  /** Show a PDF page's picture while its rows are read or looked at. */
+  const showPdfPage = useCallback((page: PdfPage) => {
+    setImageDimensions({ width: page.width, height: page.height })
+    setPreviewData(page.imageData)
+    setHasPreview(true)
+    if (previewRef.current) {
+      drawImageDataTo(previewRef.current, page.imageData)
+    }
+  }, [])
+
   /** Read one PDF page from its text layer, or OCR the raster when it has none. */
   const recognizePage = useCallback(
-    async (page: PdfPage, controller: AbortController): Promise<OcrResult> => {
-      setImageDimensions({ width: page.width, height: page.height })
-      setPreviewData(page.imageData)
-      setHasPreview(true)
-      if (previewRef.current) {
-        drawImageDataTo(previewRef.current, page.imageData)
-      }
-
+    async (page: PdfPage, controller: AbortController, guide: ColumnGuide | null): Promise<OcrResult> => {
       const onProgress = (event: ProgressEvent) => {
         setStages((prev) => reduceProgress(prev, event))
       }
-
-      const guide = columnGuideRef.current
       if (textLayerIsUsable(page.words)) {
         return client.assembleFromWords(
           page.words,
@@ -119,7 +129,6 @@ export default function App() {
           guide,
         )
       }
-
       return client.run(page.imageData, { onProgress }, controller.signal, guide)
     },
     [client],
@@ -148,50 +157,72 @@ export default function App() {
     [client],
   )
 
-  /** Process a specific PDF page (0-indexed). */
-  const processPdfPage = useCallback(
-    async (pages: PdfPage[], pageIndex: number) => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-
-      setCurrentPage(pageIndex)
-      setPhase(readerReady ? 'running' : 'booting')
-      setStages({})
-      setEdited(new Set())
-      setError(null)
-      setPdfProcessingPage(pageIndex)
-
-      const page = pages[pageIndex]
-      if (!page) return
-
-      try {
-        const next = await recognizePage(page, controller)
-        if (abortRef.current !== controller) return
-
-        setResult(next)
-        setReadResult(next)
-        rememberColumns(next)
-        setPdfResults((prev) => {
-          const updated = new Map(prev)
-          updated.set(pageIndex, { result: next, readResult: next })
-          return updated
-        })
-        setPhase('done')
-        setPdfProcessingPage(null)
-      } catch (e) {
-        if (abortRef.current !== controller) return
-        if (e instanceof OcrCancelledError) {
-          setPhase('idle')
-          setPdfProcessingPage(null)
-          return
+  /**
+   * Read pages first to last, while the first is already on screen.
+   *
+   * In order because a page that prints no header of its own is read by the
+   * columns of the page before it, and because the export is the whole
+   * document. A page that fails is noted and the rest are still read. `only`
+   * reads just those pages — the ones a cancel or a failure left — with the
+   * columns of the nearest page before each that was read.
+   */
+  const readPdfPages = useCallback(
+    async (
+      all: readonly PdfPage[],
+      controller: AbortController,
+      only?: readonly number[],
+      known: ReadonlyMap<number, PageRead> = new Map(),
+    ) => {
+      const read = new Map<number, OcrResult>([...known].map(([index, page]) => [index, page.result]))
+      const guideBefore = (index: number): ColumnGuide | null => {
+        for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
+          const found = read.get(earlier)
+          const guide = found && guideFrom(found)
+          if (guide) return guide
         }
-        setError(e instanceof Error ? e.message : String(e))
-        setPhase('error')
-        setPdfProcessingPage(null)
+        return null
       }
+      // A reader that cannot start fails every scanned page the same way, and
+      // each try waits out its start-up; one try is enough to say so.
+      let readerDown: string | null = null
+      const fail = (index: number, error: unknown) =>
+        setPageErrors((prev) => new Map(prev).set(index, error instanceof Error ? error.message : String(error)))
+
+      for (const index of only ?? all.map((_, at) => at)) {
+        const page = all[index]
+        if (!page || controller.signal.aborted) break
+        setPdfProcessingPage(index)
+        setStages({})
+        if (!textLayerIsUsable(page.words)) {
+          if (readerDown) {
+            fail(index, readerDown)
+            continue
+          }
+          try {
+            await client.ready()
+          } catch (e) {
+            if (abortRef.current !== controller) return
+            readerDown = e instanceof Error ? e.message : String(e)
+            fail(index, e)
+            continue
+          }
+        }
+        try {
+          const next = await recognizePage(page, controller, guideBefore(index))
+          if (abortRef.current !== controller) return
+          read.set(index, next)
+          setPages((prev) => new Map(prev).set(index, { result: next, readResult: next, edited: NO_EDITS }))
+        } catch (e) {
+          if (abortRef.current !== controller) return
+          if (e instanceof OcrCancelledError) break
+          fail(index, e)
+        }
+      }
+      if (abortRef.current !== controller) return
+      setPdfProcessingPage(null)
+      setPhase(read.size > 0 ? 'done' : 'idle')
     },
-    [recognizePage, readerReady],
+    [client, recognizePage],
   )
 
   const onFile = useCallback(
@@ -203,42 +234,30 @@ export default function App() {
       setFileName(file.name)
       setPhase(readerReady ? 'running' : 'booting')
       setStages({})
-      setResult(null)
-      setReadResult(null)
-      setEdited(new Set())
+      setPages(new Map())
+      setPageErrors(new Map())
+      // The last file's picture must not stand in for this one while it loads.
+      setHasPreview(false)
+      setPreviewData(null)
       setError(null)
       setPdfPages([])
-      setPdfResults(new Map())
       setCurrentPage(0)
-      columnGuideRef.current = null
+      setPdfProcessingPage(null)
 
       // ─── PDF path ───
       if (isPdf(file)) {
         setIsPdfMode(true)
         try {
-          const pages = await pdfToImages(file, 200)
+          const all = await pdfToImages(file, 200)
           if (abortRef.current !== controller) return
-          if (pages.length === 0) throw new Error('PDF has no pages')
-
-          setPdfPages(pages)
-
-          // Auto-process the first page
-          const firstPage = pages[0]
-          if (!firstPage) throw new Error('PDF has no pages')
-          const next = await recognizePage(firstPage, controller)
-          if (abortRef.current !== controller) return
-
-          setResult(next)
-          setReadResult(next)
-          rememberColumns(next)
-          setPdfResults(new Map([[0, { result: next, readResult: next }]]))
-          setPhase('done')
+          const first = all[0]
+          if (!first) throw new Error('PDF has no pages')
+          setPdfPages(all)
+          showPdfPage(first)
+          setPhase('running')
+          await readPdfPages(all, controller)
         } catch (e) {
           if (abortRef.current !== controller) return
-          if (e instanceof OcrCancelledError) {
-            setPhase('idle')
-            return
-          }
           setError(e instanceof Error ? e.message : String(e))
           setPhase('error')
         }
@@ -251,8 +270,7 @@ export default function App() {
         const loaded = await fileToImageData(file, options.maxInputSize)
         const next = await processImageData(loaded.imageData, controller)
         if (abortRef.current !== controller) return
-        setResult(next)
-        setReadResult(next)
+        setPages(new Map([[0, { result: next, readResult: next, edited: NO_EDITS }]]))
         setPhase('done')
       } catch (e) {
         if (abortRef.current !== controller) return
@@ -264,68 +282,98 @@ export default function App() {
         setPhase('error')
       }
     },
-    [client, readerReady, options.maxInputSize, processImageData, recognizePage],
+    [readerReady, options.maxInputSize, processImageData, readPdfPages, showPdfPage],
   )
 
-
-  const onEdit = useCallback((rowIndex: number, cellIndex: number, value: string) => {
-    setResult((current) => current && withCell(current, rowIndex, cellIndex, value))
-    setEdited((current) => new Set(current).add(rowIndex))
-  }, [])
+  // Edits belong to their page, so moving between pages keeps them and the
+  // export carries every page's.
+  const onEditPage = useCallback(
+    (pageIndex: number, rowIndex: number, cellIndex: number, value: string) => {
+      setPages((prev) => {
+        const page = prev.get(pageIndex)
+        if (!page) return prev
+        return new Map(prev).set(pageIndex, {
+          ...page,
+          result: withCell(page.result, rowIndex, cellIndex, value),
+          edited: new Set(page.edited).add(rowIndex),
+        })
+      })
+    },
+    [],
+  )
 
   const resetEdits = () => {
-    setResult(readResult)
-    setEdited(new Set())
+    setPages((prev) => {
+      const page = prev.get(currentPage)
+      if (!page) return prev
+      return new Map(prev).set(currentPage, { ...page, result: page.readResult, edited: NO_EDITS })
+    })
+  }
+
+  const cancel = () => {
+    abortRef.current?.abort()
+    setPdfProcessingPage(null)
+    setPhase(pages.size > 0 ? 'done' : 'idle')
+  }
+
+  /** Pages a cancel or a failure left unread. Reading them again keeps every edit. */
+  const unread = isPdfMode ? pdfPages.flatMap((_, index) => (pages.has(index) ? [] : [index])) : []
+  const readRemaining = () => {
+    if (unread.length === 0) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setPageErrors((prev) => {
+      const next = new Map(prev)
+      for (const index of unread) next.delete(index)
+      return next
+    })
+    setError(null)
+    setPhase('running')
+    void readPdfPages(pdfPages, controller, unread, pages)
   }
 
   const clearCurrent = () => {
     abortRef.current?.abort()
     setPhase('idle')
-    setResult(null)
-    setReadResult(null)
-    setEdited(new Set())
+    setPages(new Map())
+    setPageErrors(new Map())
     setError(null)
     setHasPreview(false)
     setPreviewData(null)
     setFileName(null)
     setImageDimensions(null)
     setPdfPages([])
-    setPdfResults(new Map())
     setIsPdfMode(false)
     setCurrentPage(0)
     setPdfProcessingPage(null)
-    columnGuideRef.current = null
   }
 
-  /** Switch to a different PDF page. Loads cached result or runs OCR. */
+  /** Look at another PDF page. Its rows show as soon as they are read. */
   const switchPdfPage = useCallback(
     (pageIndex: number) => {
-      if (pageIndex < 0 || pageIndex >= pdfPages.length) return
-      setCurrentPage(pageIndex)
-
-      // Show the page preview immediately
       const page = pdfPages[pageIndex]
-      setImageDimensions({ width: page.width, height: page.height })
-      setPreviewData(page.imageData)
-      if (previewRef.current) {
-        drawImageDataTo(previewRef.current, page.imageData)
-      }
-
-      // If already processed, restore cached result
-      const cached = pdfResults.get(pageIndex)
-      if (cached) {
-        setResult(cached.result)
-        setReadResult(cached.readResult)
-        setEdited(new Set())
-        setPhase('done')
-        setError(null)
-        return
-      }
-
-      // Otherwise, kick off OCR for this page
-      processPdfPage(pdfPages, pageIndex)
+      if (!page) return
+      setCurrentPage(pageIndex)
+      showPdfPage(page)
     },
-    [pdfPages, pdfResults, processPdfPage],
+    [pdfPages, showPdfPage],
+  )
+
+  const exportPages = useMemo(
+    () =>
+      [...pages.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([index, page]) => ({ page: index + 1, result: page.result })),
+    [pages],
+  )
+  const pageError = pageErrors.get(currentPage)
+  // Every page read so far, for a search across the whole document.
+  const tablePages = useMemo(
+    () =>
+      [...pages.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([index, page]) => ({ index, result: page.result, edited: page.edited })),
+    [pages],
   )
 
   const busy = phase === 'running' || phase === 'booting'
@@ -405,7 +453,7 @@ export default function App() {
       <div className="app__grid">
         {/* Left Column: Image & Upload Card */}
         <div className="stack">
-          <div className="card">
+          <div className="card ticket-card">
             <div className="card__head">
               <div className="card__head-title">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -417,7 +465,7 @@ export default function App() {
               </div>
               <div className="btn-row">
                 {busy && (
-                  <button className="btn btn--sm btn--danger" onClick={() => abortRef.current?.abort()}>
+                  <button className="btn btn--sm btn--danger" onClick={cancel}>
                     Cancel
                   </button>
                 )}
@@ -429,11 +477,11 @@ export default function App() {
               </div>
             </div>
 
-            <div className="card__body card__body--gap">
+            <div className="ticket-sticky">
+            <div className="ticket-sticky__tools">
               <Dropzone onFile={onFile} disabled={busy} />
 
-              {/* Image preview framing - always mounted in DOM, revealed when hasPreview is true */}
-              <div className="preview-container" hidden={!hasPreview}>
+              <div className="preview-chrome" hidden={!hasPreview}>
                 <div className="preview-meta">
                   <span className="preview-meta__filename" title={fileName ?? 'Receipt'}>
                     {fileName ?? 'Receipt'}
@@ -455,7 +503,7 @@ export default function App() {
                   <div className="pdf-page-nav">
                     <button
                       className="btn btn--sm btn--ghost pdf-page-nav__btn"
-                      disabled={currentPage === 0 || busy}
+                      disabled={currentPage === 0}
                       onClick={() => switchPdfPage(currentPage - 1)}
                       aria-label="Previous page"
                     >
@@ -466,18 +514,18 @@ export default function App() {
                     <div className="pdf-page-nav__pages">
                       {pdfPages.map((_, idx) => {
                         const isCurrent = idx === currentPage
-                        const isProcessed = pdfResults.has(idx)
+                        const isProcessed = pages.has(idx)
                         const isProcessing = pdfProcessingPage === idx
+                        const failed = pageErrors.has(idx)
                         return (
                           <button
                             key={idx}
                             className={`pdf-page-dot${isCurrent ? ' pdf-page-dot--active' : ''
                               }${isProcessed ? ' pdf-page-dot--done' : ''}${isProcessing ? ' pdf-page-dot--processing' : ''
-                              }`}
-                            disabled={busy && !isCurrent}
+                              }${failed ? ' pdf-page-dot--failed' : ''}`}
                             onClick={() => switchPdfPage(idx)}
                             aria-label={`Page ${idx + 1}`}
-                            title={`Page ${idx + 1}${isProcessed ? ' (processed)' : ''}`}
+                            title={`Page ${idx + 1}${isProcessed ? ' (read)' : failed ? ' (could not be read)' : isProcessing ? ' (reading…)' : ''}`}
                           >
                             {idx + 1}
                           </button>
@@ -486,7 +534,7 @@ export default function App() {
                     </div>
                     <button
                       className="btn btn--sm btn--ghost pdf-page-nav__btn"
-                      disabled={currentPage === pdfPages.length - 1 || busy}
+                      disabled={currentPage === pdfPages.length - 1}
                       onClick={() => switchPdfPage(currentPage + 1)}
                       aria-label="Next page"
                     >
@@ -497,13 +545,35 @@ export default function App() {
                   </div>
                 )}
 
+              </div>
+            </div>
+            </div>
+
+            <div className="card__body card__body--gap">
+              <div className="preview-container" hidden={!hasPreview}>
                 <canvas ref={previewRef} className="preview" />
               </div>
 
               {/* Progress and status */}
-              {busy && <StageProgress stages={stages} />}
+              {busy && isPdfMode && pdfProcessingPage !== null && (
+                <p className="reading-note" aria-live="polite">
+                  Reading page {pdfProcessingPage + 1} of {pdfPages.length}…
+                  {result ? ' Export waits until every page is read.' : ''}
+                </p>
+              )}
+              {busy && !result && !pageError && <StageProgress stages={stages} />}
+              {!busy && unread.length > 0 && (
+                <div className="reading-note reading-note--action">
+                  <span>
+                    {unread.length} of {pdfPages.length} pages not read, so the export leaves them out.
+                  </span>
+                  <button type="button" className="btn btn--sm" onClick={readRemaining}>
+                    Read remaining pages
+                  </button>
+                </div>
+              )}
 
-              {error && (
+              {(error ?? pageError) && (
                 <div className="banner banner--err" role="alert">
                   <div className="banner__icon">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -513,7 +583,10 @@ export default function App() {
                     </svg>
                   </div>
                   <div>
-                    <strong>Could not read {isPdfMode ? 'PDF' : 'image'}:</strong> {error}
+                    <strong>
+                      Could not read {isPdfMode ? (pageError && !error ? `page ${currentPage + 1}` : 'PDF') : 'image'}:
+                    </strong>{' '}
+                    {error ?? pageError}
                   </div>
                 </div>
               )}
@@ -526,34 +599,40 @@ export default function App() {
           {result ? (
             <>
               <div className="card">
-                <div className="card__head card__head--compact">
-                  <div className="card__head-title">
-                    <span className="kind-badge">{resultTitle(result)}</span>
-                    <span className="count">
-                      {toPublicJson(result).rows.length} rows
-                      {edited.size > 0 && ` · ${edited.size} edited`}
-                    </span>
-                  </div>
-                  <div className="btn-row">
-                    {edited.size > 0 && (
-                      <button className="btn btn--sm btn--subtle" onClick={resetEdits}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                          <path d="M3 3v5h5" />
-                        </svg>
-                        Reset edits
-                      </button>
-                    )}
-                  </div>
-                </div>
-
                 <div className="card__body card__body--compact">
-                  <FieldsView result={result} edited={edited} onEdit={onEdit} />
+                  <FieldsView
+                    result={result}
+                    edited={edited}
+                    title={resultTitle(result)}
+                    onResetEdits={resetEdits}
+                    pages={tablePages}
+                    currentPage={currentPage}
+                    onEditPage={onEditPage}
+                    onOpenPage={isPdfMode ? switchPdfPage : undefined}
+                  />
                 </div>
               </div>
-
-              <JsonView result={result} />
             </>
+          ) : isPdfMode && pdfPages.length > 0 ? (
+            // A page of this document with no rows to show yet: say why.
+            <div className="card empty-card">
+              <div className="card__body empty-card__body">
+                <h3 className="empty-card__title">
+                  {pageError
+                    ? `Page ${currentPage + 1} could not be read`
+                    : busy
+                      ? `Reading page ${currentPage + 1}…`
+                      : `Page ${currentPage + 1} was not read`}
+                </h3>
+                <p className="empty-card__desc">
+                  {pageError
+                    ? pageError
+                    : busy
+                      ? 'Its rows appear here as soon as it is read. Pages are read in order.'
+                      : 'Reading stopped before this page. Read the remaining pages to include it.'}
+                </p>
+              </div>
+            </div>
           ) : (
             <div className="card empty-card">
               <div className="card__body empty-card__body">
@@ -588,6 +667,14 @@ export default function App() {
                 </div>
               </div>
             </div>
+          )}
+          {exportPages.length > 0 && (
+            <JsonView
+              pages={exportPages}
+              total={isPdfMode ? pdfPages.length : 1}
+              reading={busy}
+              fileName={fileName}
+            />
           )}
         </div>
       </div>

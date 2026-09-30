@@ -80,7 +80,7 @@ export function Dropzone({ onFile, disabled = false, hint }: DropzoneProps) {
       </div>
 
       <div className="dropzone__content">
-        <label className="btn btn--primary dropzone__btn" htmlFor={inputId}>
+        <label className="btn btn--primary btn--sm dropzone__btn" htmlFor={inputId}>
           <svg
             width="16"
             height="16"

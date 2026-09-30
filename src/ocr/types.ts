@@ -39,6 +39,12 @@ export interface TableRow {
   cells: string[]
   /** Mean word confidence in [0, 1]. Omitted from the public JSON. */
   confidence: number
+  /**
+   * A line printed among the items that is not one, such as the reason
+   * `***DAMAGED IN TRANSIT***` above a credited item. Kept as its own row, as
+   * printed, with only its column filled.
+   */
+  label?: boolean
 }
 
 /**

@@ -515,15 +515,15 @@ button {
 .dropzone {
   position: relative;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  padding: 28px 18px;
-  border: 2px dashed var(--border-strong);
-  border-radius: var(--radius);
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius-md);
   background: var(--bg-sunken);
-  text-align: center;
+  text-align: left;
   transition: all 160ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
@@ -545,27 +545,28 @@ button {
 
 .dropzone__icon-wrap {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 48px;
-  height: 48px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   background: var(--bg-raised);
   color: var(--accent);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
 }
 
 .dropzone__icon {
-  width: 24px;
-  height: 24px;
+  width: 15px;
+  height: 15px;
 }
 
 .dropzone__content {
   display: flex;
-  flex-direction: column;
+  flex-flow: row wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 12px;
+  min-width: 0;
 }
 
 .dropzone__btn {
@@ -683,6 +684,20 @@ button {
   border-radius: var(--radius-sm);
 }
 
+.reading-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.reading-note--action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .pdf-page-nav__pages {
   display: flex;
   flex-wrap: wrap;
@@ -731,6 +746,12 @@ button {
   color: var(--ok-text);
   background: var(--ok-soft);
   border-color: var(--ok-border);
+}
+
+.pdf-page-dot--failed:not(.pdf-page-dot--active) {
+  color: var(--err-text);
+  background: var(--err-soft);
+  border-color: var(--err-border);
 }
 
 .pdf-page-dot--processing {
@@ -924,11 +945,28 @@ button {
 
 .table-controls {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
   margin-bottom: 8px;
+}
+
+.table-controls__start {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.table-controls__end {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .search-box {
@@ -1092,6 +1130,39 @@ button {
   white-space: nowrap;
 }
 
+/* A search across pages: which pages matched, and each row's page. */
+.search-scope {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.page-link {
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+
+.page-link:hover,
+.page-link:focus-visible {
+  text-decoration: underline;
+}
+
+/* A page set out with other columns: its own titles above its rows. */
+.fields__retitle td {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+  white-space: nowrap;
+}
+
 .fields th.th--seq,
 .fields td.td--seq {
   width: 38px;
@@ -1153,6 +1224,13 @@ button {
   background: var(--bg-sunken);
   font-weight: 700;
   color: var(--text);
+}
+
+/* A line printed among the items that is not one, e.g. ***DAMAGED IN TRANSIT***.
+   Type only, so a low-confidence tone on the row still shows. */
+.fields__row--label .cell-input {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Cell Inputs */
@@ -1495,6 +1573,10 @@ button {
   .kind-badge {
     font-size: 12px;
     padding: 3px 8px;
+    max-width: 42vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .count {
@@ -1503,25 +1585,14 @@ button {
 
   /* Dropzone on Mobile */
   .dropzone {
-    padding: 20px 12px;
-    gap: 10px;
+    padding: 8px 10px;
+    gap: 8px;
   }
 
-  .dropzone__icon-wrap {
-    width: 40px;
-    height: 40px;
-  }
-
-  .dropzone__icon {
-    width: 20px;
-    height: 20px;
-  }
-
-  .dropzone__btn {
-    width: 100%;
-    max-width: 260px;
-    min-height: 40px;
-    font-size: 13.5px;
+  .dropzone__content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
   }
 
   .dropzone__hint {
@@ -1562,17 +1633,19 @@ button {
     font-size: 9.5px;
   }
 
-  /* Table Controls on Mobile */
+  /* Table Controls on Mobile — stay one row: search left, title right */
   .table-controls {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
   }
 
   .search-box {
-    width: 100%;
+    width: auto;
     max-width: none;
     min-width: 0;
+    flex: 1;
   }
 
   .search-box__input {
@@ -1581,13 +1654,15 @@ button {
   }
 
   .filter-tabs {
-    width: 100%;
+    width: auto;
+    max-width: 46%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding: 2px;
     display: flex;
     flex-wrap: nowrap;
+    flex-shrink: 1;
   }
 
   .filter-tabs::-webkit-scrollbar {

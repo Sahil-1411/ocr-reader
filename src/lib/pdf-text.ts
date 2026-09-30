@@ -34,12 +34,18 @@ export function textItemsToWords(
   viewportTransform: readonly number[],
 ): WordBox[] {
   const placed: WordBox[] = []
-  for (const item of items) {
+  // Which run each word was cut from. Words of one run were apart by a space
+  // in the PDF's own text, and are never glyphs of one word.
+  const runOf = new Map<WordBox, number>()
+  items.forEach((item, index) => {
     const box = placeTextRun(item, viewportTransform)
-    if (!box) continue
-    placed.push(...splitRun(box))
-  }
-  return mergeGlyphs(placed)
+    if (!box) return
+    for (const word of splitRun(box)) {
+      runOf.set(word, index)
+      placed.push(word)
+    }
+  })
+  return mergeGlyphs(placed, runOf)
 }
 
 /**
@@ -114,15 +120,27 @@ function splitRun(box: { str: string; x: number; y: number; width: number; heigh
 /**
  * PDFs often emit one glyph at a time. Join glyphs that sit on each other;
  * leave a real word space alone so columns stay apart.
+ *
+ * A run's spaces are the PDF's own, however narrow its font sets them: in
+ * Times `yeast 2 lb` is a word, a space and a one-letter word, not `yeast2`.
  */
-function mergeGlyphs(words: readonly WordBox[]): WordBox[] {
+function mergeGlyphs(words: readonly WordBox[], runOf: ReadonlyMap<WordBox, number>): WordBox[] {
   if (words.length === 0) return []
   const merged: WordBox[] = []
   for (const line of groupIntoLines(words, 0.45)) {
     let current: WordBox | null = null
+    let currentRun: number | undefined
     for (const word of line) {
       if (!current) {
         current = { ...word }
+        currentRun = runOf.get(word)
+        continue
+      }
+      const run = runOf.get(word)
+      if (run !== undefined && run === currentRun) {
+        merged.push(current)
+        current = { ...word }
+        currentRun = run
         continue
       }
       const gap = word.x - (current.x + current.width)
@@ -148,9 +166,11 @@ function mergeGlyphs(words: readonly WordBox[]): WordBox[] {
           height: Math.max(1, bottom - top),
           confidence: Math.min(current.confidence, word.confidence),
         }
+        currentRun = run
       } else {
         merged.push(current)
         current = { ...word }
+        currentRun = run
       }
     }
     if (current) merged.push(current)

@@ -1,0 +1,167 @@
+/**
+ * The whole document as one export: every page's rows, in page order.
+ *
+ * A multi-page invoice is one table printed across pages, so its export is
+ * one table too, with each row's page kept beside it. A single image or a
+ * one-page PDF exports exactly as the page does, so nothing that already
+ * reads those files has to change.
+ */
+
+import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
+import type { OcrResult, ReceiptKind } from '../ocr/types'
+
+/** One read page of the document, numbered from 1. */
+export interface ExportPage {
+  page: number
+  result: OcrResult
+}
+
+export interface DocumentJson {
+  /** The pages' kind when they agree, `mixed` when they do not. */
+  kind: ReceiptKind | 'mixed'
+  title?: string
+  /** Pages in the document. */
+  pages: number
+  /** Pages with no rows here because they were not read, or could not be. */
+  missingPages?: number[]
+  /** Every page's column headers, in the order they first appear. */
+  headers: string[]
+  /** Each row keyed by its headers, with the page it was printed on. */
+  rows: Array<Record<string, string | number>>
+}
+
+export type ExportJson = ReturnType<typeof toPublicJson> | DocumentJson
+
+/**
+ * The document's rows as JSON: the page's own shape for a one-page
+ * document, one table for a longer one — however many of its pages were read.
+ */
+export function toDocumentJson(pages: readonly ExportPage[], total: number): ExportJson | null {
+  const [first] = pages
+  if (!first) return null
+  if (total <= 1) return toPublicJson(first.result)
+
+  const layout = documentLayout(pages)
+  const title = pages.map(({ result }) => result.title).find(Boolean)
+  const missing = missingPages(pages, total)
+  return {
+    kind: layout.kind,
+    ...(title ? { title } : {}),
+    pages: total,
+    ...(missing.length > 0 ? { missingPages: missing } : {}),
+    headers: layout.keys,
+    rows: pages.flatMap(({ page, result }) => {
+      const columns = layout.columnsOf(result)
+      return rowCells(result).map((cells) => {
+        const row: Record<string, string | number> = { [layout.pageKey]: page }
+        layout.keys.forEach((key) => {
+          row[key] = ''
+        })
+        columns.forEach((column, index) => {
+          row[layout.keys[column]!] = cells[index] ?? ''
+        })
+        return row
+      })
+    }),
+  }
+}
+
+/**
+ * The document's rows as CSV.
+ *
+ * Cells go by position under each page's own headers rather than by name, so
+ * a table that prints two columns with the same title loses neither. A longer
+ * document gets a `Page` column first.
+ */
+export function toCsv(pages: readonly ExportPage[], total: number): string {
+  const [first] = pages
+  if (!first) return ''
+  if (total <= 1) {
+    return csvLines([headersOf(first.result), ...rowCells(first.result)])
+  }
+
+  const layout = documentLayout(pages)
+  const lines: string[][] = [[layout.pageTitle, ...layout.headers]]
+  for (const { page, result } of pages) {
+    const columns = layout.columnsOf(result)
+    for (const cells of rowCells(result)) {
+      const row = layout.headers.map(() => '')
+      columns.forEach((column, index) => {
+        row[column] = cells[index] ?? ''
+      })
+      lines.push([String(page), ...row])
+    }
+  }
+  return csvLines(lines)
+}
+
+/**
+ * The columns of the whole document, and where each page's cells go.
+ *
+ * Taken from the pages that have rows: a blank page reads as some kind with
+ * some headers, and neither says anything about the table. Each cell lands
+ * under the column of its own title, the n-th `PRICE` of a page under the
+ * document's n-th `PRICE`.
+ */
+function documentLayout(pages: readonly ExportPage[]) {
+  const filled = pages.filter(({ result }) => rowCells(result).length > 0)
+  const source = filled.length > 0 ? filled : pages
+  const kinds = new Set(source.map(({ result }) => result.kind))
+  const headers: string[] = []
+  for (const { result } of source) {
+    const own = headersOf(result)
+    own.forEach((header, index) => {
+      if (nth(headers, header, occurrence(own, index)) < 0) headers.push(header)
+    })
+  }
+  // JSON keys must be unique where printed titles need not be.
+  const keys = headers.map((header, index) => {
+    const count = occurrence(headers, index)
+    return count === 0 ? header : `${header} (${count + 1})`
+  })
+  return {
+    kind: kinds.size === 1 ? [...kinds][0]! : ('mixed' as const),
+    headers,
+    keys,
+    pageTitle: headers.includes('Page') ? 'PDF Page' : 'Page',
+    pageKey: keys.includes('page') ? 'pdfPage' : 'page',
+    columnsOf: (result: OcrResult) => {
+      const own = headersOf(result)
+      return own.map((header, index) => nth(headers, header, occurrence(own, index)))
+    },
+  }
+}
+
+/**
+ * A page's headers, one per cell. A row can carry more cells than the page
+ * printed titles for, and those cells are data too.
+ */
+function headersOf(result: OcrResult): string[] {
+  const width = Math.max(result.headers.length, ...rowCells(result).map((cells) => cells.length))
+  return Array.from({ length: width }, (_, index) => result.headers[index] ?? `Column ${index + 1}`)
+}
+
+function missingPages(pages: readonly ExportPage[], total: number): number[] {
+  const read = new Set(pages.map(({ page }) => page))
+  return Array.from({ length: total }, (_, index) => index + 1).filter((page) => !read.has(page))
+}
+
+/** How many times `headers[index]` has already appeared before `index`. */
+function occurrence(headers: readonly string[], index: number): number {
+  return headers.slice(0, index).filter((header) => header === headers[index]).length
+}
+
+/** Where the `count`-th (from 0) `header` sits in `headers`, or -1. */
+function nth(headers: readonly string[], header: string, count: number): number {
+  let seen = -1
+  return headers.findIndex((candidate) => candidate === header && ++seen === count)
+}
+
+function csvLines(lines: readonly (readonly string[])[]): string {
+  return lines.map((cells) => cells.map(escapeCsv).join(',')).join('\r\n')
+}
+
+function escapeCsv(value: string | undefined): string {
+  const text = value ?? ''
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}

@@ -45,6 +45,33 @@ function salesInvoice(): WordBox[] {
   ]
 }
 
+/** A word on the wholesale invoice, in its 200-dpi page pixels. */
+function wholesaleBox(text: string, x: number, y: number, width: number, height = 33): WordBox {
+  return { text, x, y, width, height, confidence: 1 }
+}
+
+/** That invoice's column titles, set on two baselines (`Qty` over `Case`). */
+function wholesaleHeader(): WordBox[] {
+  const box = wholesaleBox
+  return [
+    box('Qty', 11, 621, 60),
+    box('Case', 4, 653, 90),
+    box('Qty', 93, 621, 60),
+    box('Unt', 93, 653, 70),
+    box('Item#', 163, 621, 100),
+    box('Part#', 163, 653, 100),
+    box('UPC', 351, 636, 60),
+    box('Description', 558, 636, 220),
+    box('Case/UPC', 999, 636, 160),
+    box('Pack', 1231, 636, 80),
+    box('Prc', 1353, 621, 60),
+    box('Case', 1353, 653, 80),
+    box('Prc', 1462, 621, 60),
+    box('Unt', 1462, 653, 60),
+    box('Extended', 1535, 637, 147, 31),
+  ]
+}
+
 describe('readColumnTable', () => {
   it('fills every printed column, including values past the item number', () => {
     const table = readColumnTable(salesInvoice())
@@ -75,30 +102,9 @@ describe('readColumnTable', () => {
   })
 
   it('splits a two-line wholesale header into the printed columns', () => {
-    const box = (text: string, x: number, y: number, width: number, height = 33): WordBox => ({
-      text,
-      x,
-      y,
-      width,
-      height,
-      confidence: 1,
-    })
+    const box = wholesaleBox
     const words: WordBox[] = [
-      box('Qty', 11, 621, 60),
-      box('Case', 4, 653, 90),
-      box('Qty', 93, 621, 60),
-      box('Unt', 93, 653, 70),
-      box('Item#', 163, 621, 100),
-      box('Part#', 163, 653, 100),
-      box('UPC', 351, 636, 60),
-      box('Description', 558, 636, 220),
-      box('Case/UPC', 999, 636, 160),
-      box('Pack', 1231, 636, 80),
-      box('Prc', 1353, 621, 60),
-      box('Case', 1353, 653, 80),
-      box('Prc', 1462, 621, 60),
-      box('Unt', 1462, 653, 60),
-      box('Extended', 1535, 637, 147, 31),
+      ...wholesaleHeader(),
       box('1000', 9, 701, 60),
       box('0795A', 159, 701, 75),
       box('855553008221', 286, 702, 140),
@@ -256,6 +262,139 @@ describe('readColumnTable', () => {
         '$522.75',
         '$3,075.00 T',
       ],
+    ])
+  })
+
+  it('keeps a starred reason line as its own row instead of gluing it to the item above', () => {
+    // A credit section prints the reason over each returned item. The reason
+    // is one line under the item before it, which is the shape of a wrapped
+    // name, and it used to end up as the tail of that item's description.
+    const box = wholesaleBox
+    const table = readColumnTable([
+      ...wholesaleHeader(),
+      box('***SHORT', 465, 700, 140),
+      box('PRODUCT***', 620, 700, 170),
+      box('-2', 40, 735, 29),
+      box('2204C', 159, 735, 75),
+      box('012345000017', 286, 735, 140),
+      box('CARAMEL', 465, 735, 115),
+      box('COCOA', 595, 735, 90),
+      box('BAR', 700, 735, 55),
+      box('BX#10203-REG', 988, 735, 172),
+      box('12/18CT', 1224, 735, 93),
+      box('18.40', 1381, 735, 53),
+      box('1.022', 1456, 735, 69),
+      box('-36.80', 1594, 735, 93),
+      box('***DAMAGED', 465, 770, 165),
+      box('CASE***', 645, 770, 110),
+      box('-7', 40, 805, 29),
+      box('0005', 159, 805, 60),
+      box('CORN', 465, 805, 70),
+      box('CHIPS', 550, 805, 80),
+      box('(9.5OZ)', 645, 805, 105),
+      box('BAG***', 988, 805, 90),
+      box('***', 1224, 805, 45),
+      box('*', 1337, 805, 13),
+      box('2.95', 1381, 805, 53),
+      box('-20.65', 1594, 805, 93),
+      box('--------------------', 465, 840, 300),
+    ])
+    expect(table?.rows.map((row) => [row.cells, row.label ?? false])).toEqual([
+      [['', '', '', '', '***SHORT PRODUCT***', '', '', '', '', ''], true],
+      [['-2', '', '2204C', '012345000017', 'CARAMEL COCOA BAR', 'BX#10203-REG', '12/18CT', '18.40', '1.022', '-36.80'], false],
+      [['', '', '', '', '***DAMAGED CASE***', '', '', '', '', ''], true],
+      [['-7', '', '0005', '', 'CORN CHIPS (9.5OZ)', 'BAG***', '***', '* 2.95', '', '-20.65'], false],
+    ])
+  })
+
+  it('joins a token the reader split, and keeps a space the page printed', () => {
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM', 80, 70, 36),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('2', 30, 110, 8),
+      // `849-1706888` read as two boxes a glyph's margin apart.
+      word('849-', 80, 110, 32),
+      word('1706888', 113, 110, 56),
+      word('CIGAR', 240, 110, 40),
+      word('TUBES', 288, 110, 40),
+      // A printed space before the minus, a whole character wide.
+      word('32S', 336, 110, 24),
+      word('-120', 368, 110, 32),
+      // `3.45` split at the point.
+      word('3', 492, 110, 8),
+      word('.45', 501, 110, 24),
+      word('6.90', 580, 110, 32),
+      // A credit's minus split off its quantity.
+      word('-', 26, 150, 6),
+      word('1', 33, 150, 8),
+      word('674-806801', 80, 150, 80),
+      word('BIG', 240, 150, 24),
+      word('ISLAND', 272, 150, 48),
+      word('19.50', 484, 150, 40),
+      word('-19.50', 572, 150, 48),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['2', '849-1706888', 'CIGAR TUBES 32S -120', '3.45', '6.90'],
+      ['-1', '674-806801', 'BIG ISLAND', '19.50', '-19.50'],
+    ])
+  })
+
+  it('adds a lot number printed under the item code to that code', () => {
+    // Five-digit item numbers read like quantities; the title says they are codes.
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM#', 80, 70, 40),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('2', 30, 110, 8),
+      word('10452', 80, 110, 40),
+      word('WIDGET', 240, 110, 48),
+      word('BLUE', 296, 110, 32),
+      word('3.45', 492, 110, 32),
+      word('6.90', 580, 110, 32),
+      word('LOT', 80, 128, 24),
+      word('A12', 112, 128, 24),
+      word('1', 30, 160, 8),
+      word('20881', 80, 160, 40),
+      word('GADGET', 240, 160, 48),
+      word('24.99', 484, 160, 40),
+      word('24.99', 572, 160, 40),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['2', '10452 LOT A12', 'WIDGET BLUE', '3.45', '6.90'],
+      ['1', '20881', 'GADGET', '24.99', '24.99'],
+    ])
+  })
+
+  it('keeps figures under titles set at the left of their columns', () => {
+    // `Price` and `Amount` start their columns; the figures end them, clear of
+    // every title. The edges the titles suggest put both figures under Amount.
+    const table = readColumnTable([
+      word('Qty', 20, 70, 24),
+      word('Item', 70, 70, 32),
+      word('Description', 150, 70, 88),
+      word('Price', 420, 70, 40),
+      word('Amount', 560, 70, 48),
+      word('12', 24, 110, 16),
+      word('849-1706888', 70, 110, 72),
+      word('Copy', 150, 110, 32),
+      word('paper', 186, 110, 40),
+      word('38.99', 470, 110, 40),
+      word('467.88', 620, 110, 48),
+      word('3', 32, 140, 8),
+      word('220-4411', 70, 140, 64),
+      word('Toner', 150, 140, 40),
+      word('cartridge', 194, 140, 72),
+      word('142.50', 462, 140, 48),
+      word('427.50', 620, 140, 48),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['12', '849-1706888', 'Copy paper', '38.99', '467.88'],
+      ['3', '220-4411', 'Toner cartridge', '142.50', '427.50'],
     ])
   })
 

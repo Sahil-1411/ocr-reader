@@ -1431,27 +1431,6 @@ button {
   line-height: 1.55;
 }
 
-.empty-card__features {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 24px;
-}
-
-.feature-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  background: var(--bg-sunken);
-  border: 1px solid var(--border);
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--text-body);
-}
-
 /* ==========================================================================
    Responsive Breakpoints: Mobile, Tablet, Laptop, Desktop
    ========================================================================== */
@@ -1749,16 +1728,6 @@ button {
   .empty-card__desc {
     font-size: 12.5px;
     margin-bottom: 16px;
-  }
-
-  .empty-card__features {
-    gap: 6px;
-    margin-bottom: 16px;
-  }
-
-  .feature-pill {
-    padding: 4px 10px;
-    font-size: 11px;
   }
 }
 

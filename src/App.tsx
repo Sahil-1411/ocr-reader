@@ -646,25 +646,6 @@ export default function App() {
                   </svg>
                 </div>
                 <h3 className="empty-card__title">No Receipt Scanned Yet</h3>
-                <p className="empty-card__desc">
-                  Select a lottery settlement ticket, inventory summary, or invoice to begin.
-                  Our local OCR extracts headers, tables, numbers, and validates column arithmetic instantly.
-                </p>
-
-                <div className="empty-card__features">
-                  <div className="feature-pill">
-                    <span className="feature-pill__icon">⚡</span>
-                    <span>Fast WASM OCR</span>
-                  </div>
-                  <div className="feature-pill">
-                    <span className="feature-pill__icon">🛡️</span>
-                    <span>Zero Data Leaves Device</span>
-                  </div>
-                  <div className="feature-pill">
-                    <span className="feature-pill__icon">📊</span>
-                    <span>Instant CSV & JSON Export</span>
-                  </div>
-                </div>
               </div>
             </div>
           )}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "uvx",
+      "args": [
+        "code-review-graph",
+        "serve"
+      ],
+      "cwd": "/Users/24x7developers/OCR-reader/OCR-reader",
+      "type": "stdio"
+    }
+  }
+}

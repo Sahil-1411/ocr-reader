@@ -6,10 +6,22 @@ import { isPdf, pdfToImages, type PdfPage } from '../../lib/pdf-to-images'
 import { textLayerIsUsable } from '../../lib/pdf-text'
 import { OcrCancelledError, OcrClient } from '../../ocr/client'
 import type { ColumnGuide } from '../../ocr/layout/columns'
-import { withCell } from '../../ocr/receipt/assemble'
+import type { WordBox } from '../../ocr/layout/rows'
+import { rowCells, withCell } from '../../ocr/receipt/assemble'
 import type { PageFailure } from '../../lib/export'
 import { DEFAULT_OPTIONS, type OcrResult, type ProgressEvent } from '../../ocr/types'
-import { NO_EDITS, type PageRead, type Phase, type ReceiptSession } from './types'
+import { NO_EDITS, NO_WORDS, type PageRead, type Phase, type ReceiptSession } from './types'
+
+/** One page as it comes back from the reader: its rows and the words behind them. */
+interface Reading {
+  result: OcrResult
+  words: readonly WordBox[]
+}
+
+/** A page the reader has just returned, with nothing edited or accepted yet. */
+function freshRead({ result, words }: Reading): PageRead {
+  return { result, readResult: result, edited: NO_EDITS, validated: NO_EDITS, words }
+}
 
 /** A table's columns, to read the next page by when it prints no header of its own. */
 function guideFrom(result: OcrResult): ColumnGuide | null {
@@ -44,6 +56,8 @@ export function useReceiptSession(): ReceiptSession {
   const current = pages.get(currentPage)
   const result = current?.result ?? null
   const edited = current?.edited ?? NO_EDITS
+  const validated = current?.validated ?? NO_EDITS
+  const words = current?.words ?? NO_WORDS
 
   const client = useMemo(
     () =>
@@ -79,27 +93,33 @@ export function useReceiptSession(): ReceiptSession {
 
   /** Read one PDF page from its text layer, or OCR the raster when it has none. */
   const recognizePage = useCallback(
-    async (page: PdfPage, controller: AbortController, guide: ColumnGuide | null): Promise<OcrResult> => {
+    async (page: PdfPage, controller: AbortController, guide: ColumnGuide | null): Promise<Reading> => {
       const onProgress = (event: ProgressEvent) => {
         setStages((prev) => reduceProgress(prev, event))
       }
+      let words: readonly WordBox[] = NO_WORDS
+      const onWords = (read: readonly WordBox[]) => {
+        words = read
+      }
       if (textLayerIsUsable(page.words)) {
-        return client.assembleFromWords(
+        const result = client.assembleFromWords(
           page.words,
           { width: page.width, height: page.height },
-          { onProgress },
+          { onProgress, onWords },
           controller.signal,
           guide,
         )
+        return { result, words }
       }
-      return client.run(page.imageData, { onProgress }, controller.signal, guide)
+      const result = await client.run(page.imageData, { onProgress, onWords }, controller.signal, guide)
+      return { result, words }
     },
     [client],
   )
 
   /** Process a single ImageData through the OCR pipeline. */
   const processImageData = useCallback(
-    async (imageData: ImageData, controller: AbortController): Promise<OcrResult> => {
+    async (imageData: ImageData, controller: AbortController): Promise<Reading> => {
       setImageDimensions({ width: imageData.width, height: imageData.height })
       setPreviewData(imageData)
       setHasPreview(true)
@@ -108,11 +128,18 @@ export function useReceiptSession(): ReceiptSession {
         drawImageDataTo(previewRef.current, imageData)
       }
 
-      return client.run(
+      let words: readonly WordBox[] = NO_WORDS
+      const result = await client.run(
         imageData,
-        { onProgress: (event) => setStages((prev) => reduceProgress(prev, event)) },
+        {
+          onProgress: (event) => setStages((prev) => reduceProgress(prev, event)),
+          onWords: (read) => {
+            words = read
+          },
+        },
         controller.signal,
       )
+      return { result, words }
     },
     [client],
   )
@@ -170,8 +197,8 @@ export function useReceiptSession(): ReceiptSession {
         try {
           const next = await recognizePage(page, controller, guideBefore(index))
           if (abortRef.current !== controller) return
-          read.set(index, next)
-          setPages((prev) => new Map(prev).set(index, { result: next, readResult: next, edited: NO_EDITS }))
+          read.set(index, next.result)
+          setPages((prev) => new Map(prev).set(index, freshRead(next)))
         } catch (e) {
           if (abortRef.current !== controller) return
           if (e instanceof OcrCancelledError) break
@@ -228,7 +255,7 @@ export function useReceiptSession(): ReceiptSession {
         const loaded = await fileToImageData(file, options.maxInputSize)
         const next = await processImageData(loaded.imageData, controller)
         if (abortRef.current !== controller) return
-        setPages(new Map([[0, { result: next, readResult: next, edited: NO_EDITS }]]))
+        setPages(new Map([[0, freshRead(next)]]))
         setPhase('done')
       } catch (e) {
         if (abortRef.current !== controller) return
@@ -254,17 +281,41 @@ export function useReceiptSession(): ReceiptSession {
           ...page,
           result: withCell(page.result, rowIndex, cellIndex, value),
           edited: new Set(page.edited).add(rowIndex),
+          // Someone has just read this row against the page and typed what it
+          // says, which is what accepting it means.
+          validated: new Set(page.validated).add(rowIndex),
         })
       })
     },
     [],
   )
 
+  /**
+   * Accept every row of the page on screen at once.
+   *
+   * The page on screen rather than the document: accepting a row says someone
+   * has looked at it, and the pages nobody has turned to have not been.
+   */
+  const validateAll = useCallback(() => {
+    setPages((prev) => {
+      const page = prev.get(currentPage)
+      if (!page) return prev
+      const all = new Set(rowCells(page.result).map((_, index) => index))
+      return new Map(prev).set(currentPage, { ...page, validated: all })
+    })
+  }, [currentPage])
+
   const resetEdits = () => {
     setPages((prev) => {
       const page = prev.get(currentPage)
       if (!page) return prev
-      return new Map(prev).set(currentPage, { ...page, result: page.readResult, edited: NO_EDITS })
+      // The edits go, and so does the acceptance they carried with them.
+      return new Map(prev).set(currentPage, {
+        ...page,
+        result: page.readResult,
+        edited: NO_EDITS,
+        validated: NO_EDITS,
+      })
     })
   }
 
@@ -350,7 +401,12 @@ export function useReceiptSession(): ReceiptSession {
     () =>
       [...pages.entries()]
         .sort(([a], [b]) => a - b)
-        .map(([index, page]) => ({ index, result: page.result, edited: page.edited })),
+        .map(([index, page]) => ({
+          index,
+          result: page.result,
+          edited: page.edited,
+          validated: page.validated,
+        })),
     [pages],
   )
 
@@ -371,6 +427,8 @@ export function useReceiptSession(): ReceiptSession {
     previewRef,
     result,
     edited,
+    validated,
+    words,
     busy,
     unread,
     pageError,
@@ -379,6 +437,7 @@ export function useReceiptSession(): ReceiptSession {
     tablePages,
     onFile,
     onEditPage,
+    validateAll,
     resetEdits,
     cancel,
     readRemaining,

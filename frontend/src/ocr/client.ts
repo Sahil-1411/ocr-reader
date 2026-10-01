@@ -21,6 +21,12 @@ import { DEFAULT_OPTIONS, type OcrOptions, type OcrResult, type ProgressEvent } 
 
 interface RunCallbacks {
   onProgress?: (event: ProgressEvent) => void
+  /**
+   * The words the page was read from, in the pixel space of the image that
+   * was read. The viewer draws them over the page so a reading can be checked
+   * against the print it came from.
+   */
+  onWords?: (words: readonly WordBox[]) => void
 }
 
 interface OcrClientEvents {
@@ -182,6 +188,7 @@ export class OcrClient {
       this.#throwIfStale(token, signal)
 
       const recognizeMs = now() - recognizeStarted
+      callbacks.onWords?.(words)
       callbacks.onProgress?.({
         stage: 'recognize',
         status: 'done',
@@ -251,6 +258,7 @@ export class OcrClient {
       status: 'skip',
       message: 'digital text needs no cleanup',
     })
+    callbacks.onWords?.(words)
     callbacks.onProgress?.({
       stage: 'recognize',
       status: 'skip',

@@ -89,7 +89,9 @@ export function readColumnTable(
   let leadIn: { cells: string[]; band: { top: number; bottom: number } } | null = null
 
   for (const line of body) {
-    let cells: string[] = bucketsForLine(line, columns, bounds, lineHeight, titled).map(joinWords)
+    let cells: string[] = withoutStockNote(
+      bucketsForLine(line, columns, bounds, lineHeight, titled).map(joinWords),
+    )
     const item = isLineItem(cells)
     // A product can be called anything; only a line that is not an item can
     // be page furniture.
@@ -1113,6 +1115,30 @@ function isSummary(cells: readonly string[], item: boolean): boolean {
   const amounts = cells.filter((cell) => /\d\.\d{2}/.test(cell) && !/[A-Za-z]{2,}/.test(cell)).length
   const coded = cells.some((cell) => /^[A-Za-z0-9-]{4,24}$/.test(cell.trim()) && /\d/.test(cell))
   return words.length <= 3 && amounts === 1 && !coded
+}
+
+/**
+ * `OUT OF STOCK` and `NO STOCK`, which the invoice prints under an item, or
+ * beside it, as a note on the order. The words say nothing about what the
+ * product is, so they are cut out before the line is placed: on its own line
+ * the note then has no cells left and is dropped like any blank line, and on
+ * an item's own line the description keeps only the item's name.
+ *
+ * The reader can set the phrase with or without its spaces, and a note is
+ * often starred — `***OUT OF STOCK***` — so a cell left with nothing but
+ * decoration is emptied too.
+ */
+const STOCK_NOTE = /\bout\s*of\s*stock\b|\bno\s*stock\b/i
+const STOCK_NOTES = new RegExp(STOCK_NOTE.source, 'gi')
+
+/** `cells` without any stock note; the same cells when none is printed. */
+function withoutStockNote(cells: readonly string[]): string[] {
+  if (!cells.some((cell) => STOCK_NOTE.test(cell))) return [...cells]
+  return cells.map((cell) => {
+    if (!STOCK_NOTE.test(cell)) return cell
+    const cut = cell.replace(STOCK_NOTES, ' ').replace(/\s+/g, ' ').trim()
+    return /[A-Za-z0-9]/.test(cut) ? cut : ''
+  })
 }
 
 function isRule(cells: readonly string[]): boolean {

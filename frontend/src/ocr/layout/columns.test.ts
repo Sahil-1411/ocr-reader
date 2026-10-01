@@ -307,6 +307,41 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('drops an out-of-stock note instead of gluing it to the description', () => {
+    // The invoice prints the note under the item it belongs to, where a
+    // wrapped name would sit, so it used to end up as the tail of the
+    // description. Starred or not, the words are an order note, not a name.
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM', 80, 70, 36),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('8', 30, 110, 8),
+      word('353789', 80, 110, 48),
+      word('ALP', 240, 110, 24),
+      word('NIC', 272, 110, 24),
+      word('POUCH', 304, 110, 40),
+      word('19.50', 484, 110, 40),
+      word('156.00', 572, 110, 48),
+      word('OUT', 240, 132, 24),
+      word('OF', 272, 132, 16),
+      word('STOCK', 296, 132, 40),
+      word('3', 30, 170, 8),
+      word('383612', 80, 170, 48),
+      word('ZYN', 240, 170, 24),
+      word('SPEARMINT', 272, 170, 72),
+      word('19.50', 484, 170, 40),
+      word('58.50', 572, 170, 40),
+      word('***NO', 240, 192, 40),
+      word('STOCK***', 288, 192, 64),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['8', '353789', 'ALP NIC POUCH', '19.50', '156.00'],
+      ['3', '383612', 'ZYN SPEARMINT', '19.50', '58.50'],
+    ])
+  })
+
   it('joins a token the reader split, and keeps a space the page printed', () => {
     const table = readColumnTable([
       word('QTY', 20, 70, 28),

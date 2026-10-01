@@ -158,41 +158,55 @@ button {
 .app {
   width: 100%;
   margin: 0 auto;
-  padding: 24px 20px 80px;
+  padding: 0 0 80px;
 }
 
 /* --------------------------------------------------------------------------
    Header & Navbar
    -------------------------------------------------------------------------- */
 
+.app__top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin-bottom: 16px;
+  padding: 8px 16px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
 .app__header {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  min-height: 36px;
 }
 
 .app__brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .app__logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   color: #ffffff;
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
   flex-shrink: 0;
+}
+
+.app__logo svg {
+  width: 18px;
+  height: 18px;
 }
 
 .app__title-row {
@@ -203,16 +217,21 @@ button {
 
 .app__title {
   margin: 0;
-  font-size: 21px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.2;
   color: var(--text);
 }
 
 .app__subtitle {
-  margin: 3px 0 0;
+  margin: 1px 0 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 11.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .app__controls {
@@ -269,6 +288,7 @@ button {
   gap: 22px;
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
+  padding: 0 20px;
 }
 
 @media (min-width: 900px) {
@@ -1399,17 +1419,101 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   Export Card & JSON Drawer
+   Export dock — sticky header above the rows
    -------------------------------------------------------------------------- */
 
-.export-card {
-  margin-top: 4px;
+.export-dock__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.export-group {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 1 1 360px;
+  min-width: min(100%, 300px);
+  min-height: 34px;
+  padding: 3px 4px 3px 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.export-group__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--accent);
+}
+
+.export-group__label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.export-group .count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.export-group .btn-row {
+  flex-shrink: 1;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.export-group .btn--sm {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.export-dock__panels {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: -4px 16px 12px;
+}
+
+.export-dock__panel {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: auto;
+  max-height: min(40vh, 320px);
+}
+
+.export-dock__panel .table-responsive {
+  border: 0;
+  border-radius: 0;
+}
+
+.export-dock__panel--code {
+  padding: 0;
+  background: var(--bg-sunken);
 }
 
 .export-title-group {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: var(--accent);
 }
 
@@ -1421,9 +1525,7 @@ button {
 
 .json-preview {
   margin: 0;
-  padding: 16px;
-  max-height: 360px;
-  overflow: auto;
+  padding: 14px 16px;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
@@ -1478,7 +1580,22 @@ button {
 /* Tablets (Portrait & Landscape: 641px - 1024px) */
 @media (min-width: 641px) and (max-width: 1024px) {
   .app {
-    padding: 20px 16px 60px;
+    padding: 0 0 60px;
+  }
+
+  .app__top {
+    padding: 8px 16px;
+  }
+
+  .app__grid,
+  .export-dock__panels {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .export-dock__panels {
+    margin-left: 0;
+    margin-right: 0;
   }
 
   .preview {
@@ -1501,44 +1618,41 @@ button {
 /* Mobile Screens (<= 640px) */
 @media (max-width: 640px) {
   .app {
-    padding: 12px 10px 48px;
+    padding: 0 0 48px;
   }
 
-  /* Header on Mobile */
+  .app__top {
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+
+  .app__grid {
+    padding: 0 10px;
+  }
+
+  .export-dock__panels {
+    margin: -4px 10px 12px;
+  }
+
+  /* Header stays one row: brand left, theme right. */
   .app__header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    margin-bottom: 14px;
-    padding-bottom: 12px;
+    gap: 8px;
   }
 
   .app__brand {
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .app__logo {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-  }
-
-  .app__title {
-    font-size: 19px;
+    gap: 8px;
   }
 
   .app__subtitle {
-    font-size: 12px;
-    line-height: 1.4;
+    display: none;
   }
 
   .app__controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .segmented__label {
+    display: none;
   }
 
   .segmented__option {
@@ -1744,22 +1858,35 @@ button {
     word-break: break-word;
   }
 
-  /* Export Card on Mobile */
-  .export-card .card__head {
+  /* Each export group stays one line; buttons scroll if they don't fit. */
+  .export-dock__bar {
     flex-direction: column;
     align-items: stretch;
-    gap: 10px;
-  }
-
-  .export-card .btn-row {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
     gap: 6px;
-    width: 100%;
+    margin-top: 6px;
   }
 
-  .export-card .btn-row .btn--ghost {
-    grid-column: span 2;
+  .export-group {
+    flex: none;
+    padding: 3px 4px 3px 8px;
+  }
+
+  .export-group .count {
+    display: none;
+  }
+
+  .export-group .btn-row {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .export-group .btn-row::-webkit-scrollbar {
+    display: none;
+  }
+
+  .export-group .btn {
+    flex-shrink: 0;
   }
 
   /* Empty State on Mobile */

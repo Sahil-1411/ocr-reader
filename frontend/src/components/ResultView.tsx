@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 
 import {
   toCsv,
@@ -558,29 +558,65 @@ function CopyButton({ text, label, title, disabled }: {
 }
 
 /* -------------------------------------------------------------------------- */
-/* JSON & Export View                                                         */
+/* Export dock                                                                */
 /* -------------------------------------------------------------------------- */
 
-interface JsonViewProps {
+interface ExportDockProps {
+  /** The app title row. The export actions sit in that same sticky header. */
+  header: ReactNode
   /** Every page read so far, in page order, with the user's edits. */
   pages: readonly ExportPage[]
   /** Pages in the document: 1 for an image. */
   total: number
-  /** Still reading pages: the export waits for all of them. */
+  /** Pages that produced no rows: a read that failed, or one never reached. */
+  failures: readonly PageFailure[]
+  /** Still reading pages: downloads wait until every page is done. */
   reading: boolean
   /** The uploaded file's name, for the downloads. */
   fileName: string | null
 }
 
-export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
+function DockRow({
+  icon,
+  title,
+  scope,
+  children,
+}: {
+  icon: ReactNode
+  title: string
+  scope: string
+  children: ReactNode
+}) {
+  return (
+    <div className="export-group">
+      <div className="export-group__meta">
+        {icon}
+        <h2 className="export-group__label">{title}</h2>
+        <span className="count" aria-live="polite">{scope}</span>
+      </div>
+      <div className="btn-row">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * Export and skipped-log actions, placed in the app header so they stay put
+ * while the page scrolls.
+ *
+ * The export is what the document says. The log is everything the reader set
+ * aside to say it — totals, page furniture, notes cut out of a line, and any
+ * page that produced no rows at all.
+ */
+export function ExportDock({ header, pages, total, failures, reading, fileName }: ExportDockProps) {
   const [showJson, setShowJson] = useState(false)
+  const [showLog, setShowLog] = useState(false)
 
   const publicData = useMemo(() => toDocumentJson(pages, total), [pages, total])
   const json = useMemo(() => JSON.stringify(publicData, null, 2), [publicData])
   const rowCount = publicData?.rows.length ?? 0
   const complete = !reading && pages.length === total
-  const ready = !reading && pages.length > 0
-  const scope =
+  const exportReady = !reading && pages.length > 0
+  const exportScope =
     total === 1
       ? `${rowCount} rows`
       : reading
@@ -588,34 +624,55 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
         : complete
           ? `All ${total} pages · ${rowCount} rows`
           : `${pages.length} of ${total} pages read · ${rowCount} rows`
-  const waiting = reading ? 'Export includes every page once all of them are read' : undefined
-  const baseName = exportBaseName(fileName, `${publicData?.kind ?? 'receipt'}-receipt`)
+  const exportWaiting = reading ? 'Export includes every page once all of them are read' : undefined
+  const exportBase = exportBaseName(fileName, `${publicData?.kind ?? 'receipt'}-receipt`)
 
-  const downloadJson = () => saveFile(json, 'application/json', `${baseName}.json`)
-  // The byte-order mark tells Excel the file is UTF-8, so `CRÈME` stays `CRÈME`.
-  const downloadCsv = () =>
-    saveFile(`\uFEFF${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', `${baseName}.csv`)
+  const log = useMemo(() => toSkippedLog(pages, total, failures), [pages, total, failures])
+  const logJson = useMemo(() => JSON.stringify(log, null, 2), [log])
+  const skippedCount = log.rows.length
+  const failed = log.failedPages?.length ?? 0
+  const logReady = !reading && skippedCount > 0
+  const logScope = reading
+    ? `Reading pages… ${skippedCount} so far`
+    : skippedCount === 0
+      ? 'Nothing skipped'
+      : failed > 0
+        ? `${skippedCount} entries · ${failed} ${failed === 1 ? 'page' : 'pages'} not read`
+        : `${skippedCount} ${skippedCount === 1 ? 'entry' : 'entries'}`
+  const logWaiting = reading ? 'The log covers every page once all of them are read' : undefined
+  const logEmpty = skippedCount === 0 ? 'Every printed line went into the export' : undefined
+  const logBase = `${exportBaseName(fileName, 'receipt')}-skipped`
+
+  const downloadExportJson = () => saveFile(json, 'application/json', `${exportBase}.json`)
+  const downloadExportCsv = () =>
+    saveFile(`\uFEFF${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', `${exportBase}.csv`)
+  const downloadLogJson = () => saveFile(logJson, 'application/json', `${logBase}.json`)
+  const downloadLogCsv = () =>
+    saveFile(`\uFEFF${toSkippedCsv(pages, total, failures)}`, 'text/csv;charset=utf-8;', `${logBase}.csv`)
 
   return (
-    <div className="card export-card">
-      <div className="card__head">
-        <div className="export-title-group">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="16 16 12 12 8 16" />
-            <line x1="12" y1="12" x2="12" y2="21" />
-            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
-            <polyline points="16 16 12 12 8 16" />
-          </svg>
-          <h2 className="card__title">Export & Data Output</h2>
-          <span className="count" aria-live="polite">{scope}</span>
-        </div>
-        <div className="btn-row">
+    <>
+      <div className="app__top">
+        {header}
+        <div className="export-dock__bar">
+        <DockRow
+          icon={
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="16 16 12 12 8 16" />
+              <line x1="12" y1="12" x2="12" y2="21" />
+              <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
+              <polyline points="16 16 12 12 8 16" />
+            </svg>
+          }
+          title="Export"
+          scope={exportScope}
+        >
           <button
             type="button"
             className="btn btn--sm"
-            onClick={downloadCsv}
-            disabled={!ready}
-            title={waiting ?? 'Download every row as a CSV spreadsheet'}
+            onClick={downloadExportCsv}
+            disabled={!exportReady}
+            title={exportWaiting ?? 'Download every row as a CSV spreadsheet'}
           >
             <DownloadIcon />
             CSV
@@ -623,9 +680,9 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
           <button
             type="button"
             className="btn btn--sm"
-            onClick={downloadJson}
-            disabled={!ready}
-            title={waiting ?? 'Download every row as JSON'}
+            onClick={downloadExportJson}
+            disabled={!exportReady}
+            title={exportWaiting ?? 'Download every row as JSON'}
           >
             <DownloadIcon />
             JSON
@@ -633,99 +690,38 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
           <CopyButton
             text={json}
             label="Copy every row as JSON"
-            title={waiting ?? 'Copy every row as JSON'}
-            disabled={!ready}
+            title={exportWaiting ?? 'Copy every row as JSON'}
+            disabled={!exportReady}
           />
           <button
             type="button"
             className="btn btn--sm btn--ghost"
-            onClick={() => setShowJson(!showJson)}
+            onClick={() => setShowJson((open) => !open)}
+            aria-expanded={showJson}
+            aria-label={showJson ? 'Hide raw JSON' : 'View raw JSON'}
+            title={showJson ? 'Hide raw JSON' : 'View raw JSON'}
           >
-            {showJson ? 'Hide Raw JSON' : 'View Raw JSON'}
+            {showJson ? 'Hide' : 'Raw'}
           </button>
-        </div>
-      </div>
+        </DockRow>
 
-      {showJson && (
-        <div className="card__body card__body--code">
-          <pre className="json-preview">{json}</pre>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* -------------------------------------------------------------------------- */
-/* Skipped & Removed View                                                     */
-/* -------------------------------------------------------------------------- */
-
-interface SkippedViewProps {
-  /** Every page read so far, in page order. */
-  pages: readonly ExportPage[]
-  /** Pages in the document: 1 for an image. */
-  total: number
-  /** Pages that produced no rows: a read that failed, or one never reached. */
-  failures: readonly PageFailure[]
-  /** Still reading pages: the log waits for all of them. */
-  reading: boolean
-  /** The uploaded file's name, for the downloads. */
-  fileName: string | null
-}
-
-/**
- * What the read left out, kept apart from the data export.
- *
- * The export is what the document says; this is the account of everything the
- * reader printed over to say it — totals, page furniture, notes cut out of a
- * line, and any page that produced no rows at all.
- */
-export function SkippedView({ pages, total, failures, reading, fileName }: SkippedViewProps) {
-  const [showLog, setShowLog] = useState(false)
-
-  const log = useMemo(() => toSkippedLog(pages, total, failures), [pages, total, failures])
-  const json = useMemo(() => JSON.stringify(log, null, 2), [log])
-  const count = log.rows.length
-  const failed = log.failedPages?.length ?? 0
-  const ready = !reading && count > 0
-  const scope = reading
-    ? `Reading pages… ${count} so far`
-    : count === 0
-      ? 'Nothing skipped'
-      : failed > 0
-        ? `${count} entries · ${failed} ${failed === 1 ? 'page' : 'pages'} not read`
-        : `${count} ${count === 1 ? 'entry' : 'entries'}`
-  const waiting = reading ? 'The log covers every page once all of them are read' : undefined
-  const empty = count === 0 ? 'Every printed line went into the export' : undefined
-  const baseName = `${exportBaseName(fileName, 'receipt')}-skipped`
-
-  const downloadJson = () => saveFile(json, 'application/json', `${baseName}.json`)
-  // The byte-order mark tells Excel the file is UTF-8, so `CRÈME` stays `CRÈME`.
-  const downloadCsv = () =>
-    saveFile(
-      `﻿${toSkippedCsv(pages, total, failures)}`,
-      'text/csv;charset=utf-8;',
-      `${baseName}.csv`,
-    )
-
-  return (
-    <div className="card export-card">
-      <div className="card__head">
-        <div className="export-title-group">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" />
-            <line x1="12" y1="8" x2="12" y2="13" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <h2 className="card__title">Skipped &amp; Removed</h2>
-          <span className="count" aria-live="polite">{scope}</span>
-        </div>
-        <div className="btn-row">
+        <DockRow
+          icon={
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="8" x2="12" y2="13" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          }
+          title="Skipped"
+          scope={logScope}
+        >
           <button
             type="button"
             className="btn btn--sm"
-            onClick={downloadCsv}
-            disabled={!ready}
-            title={waiting ?? empty ?? 'Download the log as a CSV spreadsheet'}
+            onClick={downloadLogCsv}
+            disabled={!logReady}
+            title={logWaiting ?? logEmpty ?? 'Download the log as a CSV spreadsheet'}
           >
             <DownloadIcon />
             CSV
@@ -733,33 +729,44 @@ export function SkippedView({ pages, total, failures, reading, fileName }: Skipp
           <button
             type="button"
             className="btn btn--sm"
-            onClick={downloadJson}
-            disabled={!ready}
-            title={waiting ?? empty ?? 'Download the log as JSON'}
+            onClick={downloadLogJson}
+            disabled={!logReady}
+            title={logWaiting ?? logEmpty ?? 'Download the log as JSON'}
           >
             <DownloadIcon />
             JSON
           </button>
           <CopyButton
-            text={json}
+            text={logJson}
             label="Copy the log as JSON"
-            title={waiting ?? empty ?? 'Copy the log as JSON'}
-            disabled={!ready}
+            title={logWaiting ?? logEmpty ?? 'Copy the log as JSON'}
+            disabled={!logReady}
           />
           <button
             type="button"
             className="btn btn--sm btn--ghost"
-            onClick={() => setShowLog(!showLog)}
-            disabled={count === 0}
-            title={empty}
+            onClick={() => setShowLog((open) => !open)}
+            disabled={skippedCount === 0}
+            title={logEmpty ?? (showLog ? 'Hide the skipped log' : 'View the skipped log')}
+            aria-label={showLog ? 'Hide skipped log' : 'View skipped log'}
+            aria-expanded={showLog}
           >
-            {showLog ? 'Hide Log' : 'View Log'}
+            {showLog ? 'Hide' : 'Log'}
           </button>
+        </DockRow>
         </div>
       </div>
 
-      {showLog && count > 0 && (
-        <div className="card__body card__body--compact">
+      {(showJson || (showLog && skippedCount > 0)) && (
+        <div className="export-dock__panels">
+      {showJson && (
+        <div className="export-dock__panel export-dock__panel--code">
+          <pre className="json-preview">{json}</pre>
+        </div>
+      )}
+
+      {showLog && skippedCount > 0 && (
+        <div className="export-dock__panel">
           <div className="table-responsive">
             <table className="fields">
               <thead>
@@ -778,8 +785,6 @@ export function SkippedView({ pages, total, failures, reading, fileName }: Skipp
                   >
                     {total > 1 && <td className="num">{row.page}</td>}
                     <td className="col--text">{row.what}</td>
-                    {/* The printed line can run the width of the page; the cell
-                        shows what fits and the title holds the rest. */}
                     <td className="col--wide log-text" title={row.text}>
                       {row.text}
                     </td>
@@ -793,6 +798,8 @@ export function SkippedView({ pages, total, failures, reading, fileName }: Skipp
           </div>
         </div>
       )}
-    </div>
+        </div>
+      )}
+    </>
   )
 }

@@ -378,7 +378,7 @@ button {
 
 @media (min-width: 900px) {
   .app__grid {
-    grid-template-columns: minmax(290px, 1fr) minmax(0, 1.5fr);
+    grid-template-columns: minmax(290px, 1fr) minmax(0, 1.2fr);
     align-items: start;
     gap: 20px;
   }
@@ -386,7 +386,7 @@ button {
 
 @media (min-width: 1100px) {
   .app__grid {
-    grid-template-columns: minmax(340px, 1fr) minmax(0, 1.8fr);
+    grid-template-columns: minmax(360px, 1fr) minmax(0, 1.3fr);
     gap: 24px;
   }
 }
@@ -761,30 +761,6 @@ button {
   border-radius: 9999px;
 }
 
-/* --------------------------------------------------------------------------
-   PDF Page Navigator
-   -------------------------------------------------------------------------- */
-
-.pdf-page-nav {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: var(--bg-sunken);
-  border-bottom: 1px solid var(--border);
-}
-
-.pdf-page-nav__btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: var(--radius-sm);
-}
-
 .reading-note {
   margin: 0;
   font-size: 12px;
@@ -797,92 +773,6 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.pdf-page-nav__pages {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  flex: 1;
-  justify-content: center;
-}
-
-.pdf-page-dot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.pdf-page-dot:hover:not(:disabled) {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent-border);
-}
-
-.pdf-page-dot--active {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
-}
-
-.pdf-page-dot--active:hover:not(:disabled) {
-  background: var(--accent-hover);
-  color: #fff;
-  border-color: var(--accent-hover);
-}
-
-.pdf-page-dot--done:not(.pdf-page-dot--active) {
-  color: var(--ok-text);
-  background: var(--ok-soft);
-  border-color: var(--ok-border);
-}
-
-.pdf-page-dot--failed:not(.pdf-page-dot--active) {
-  color: var(--err-text);
-  background: var(--err-soft);
-  border-color: var(--err-border);
-}
-
-.pdf-page-dot--processing {
-  position: relative;
-  overflow: hidden;
-}
-
-.pdf-page-dot--processing::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(79, 70, 229, 0.15) 50%,
-    transparent 100%
-  );
-  animation: pdf-dot-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes pdf-dot-pulse {
-  0%,
-  100% {
-    opacity: 0;
-    transform: translateX(-100%);
-  }
-  50% {
-    opacity: 1;
-    transform: translateX(100%);
-  }
 }
 
 /* --------------------------------------------------------------------------
@@ -1066,7 +956,7 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  flex-shrink: 0;
+  min-width: 0;
   margin-left: auto;
 }
 
@@ -1136,59 +1026,6 @@ button {
 .search-box__clear:hover {
   background: var(--border-strong);
   color: var(--text);
-}
-
-.filter-tabs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: var(--bg-sunken);
-  padding: 3px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-}
-
-.filter-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 9px;
-  border-radius: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-muted);
-  transition: all 120ms ease;
-}
-
-.filter-tab:hover {
-  color: var(--text);
-}
-
-.filter-tab--active {
-  background: var(--bg-raised);
-  color: var(--text);
-  font-weight: 600;
-  box-shadow: var(--shadow-sm);
-}
-
-.tab-badge {
-  display: inline-flex;
-  padding: 1px 5px;
-  border-radius: 10px;
-  font-size: 10.5px;
-  font-weight: 600;
-  background: var(--border);
-  color: var(--text);
-}
-
-.tab-badge--warn {
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.tab-badge--ok {
-  background: var(--ok-soft);
-  color: var(--ok);
 }
 
 /* --------------------------------------------------------------------------
@@ -1467,8 +1304,10 @@ button {
 }
 
 .kind-badge {
-  display: inline-flex;
-  align-items: center;
+  /* Not a flex box: `text-overflow` only cuts the text of a block. */
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1.45;
   padding: 4px 10px;
   border-radius: 6px;
   background: var(--accent-soft);
@@ -1477,6 +1316,15 @@ button {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: -0.01em;
+  /* An invoice with no printed heading is named after its own columns, which
+     is a sentence rather than a title. Cut it rather than let it push the
+     search box off the card. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .count {
@@ -1503,6 +1351,378 @@ button {
   background: var(--bg-sunken);
   border-radius: var(--radius-md);
   border: 1px dashed var(--border);
+}
+
+/* --------------------------------------------------------------------------
+   Numbered panel steps — the two halves of the window, in order
+   -------------------------------------------------------------------------- */
+
+.card__step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  flex: none;
+}
+
+/* --------------------------------------------------------------------------
+   Icon buttons — the viewer's tools and a row's actions
+   -------------------------------------------------------------------------- */
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn--outline {
+  background: var(--bg-raised);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.btn--outline:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* --------------------------------------------------------------------------
+   Receipt viewer — tabs, stage, overlay, pager, thumbnails
+   -------------------------------------------------------------------------- */
+
+.viewer-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+}
+
+.viewer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.viewer-tab:hover:not(:disabled):not(.viewer-tab--active) {
+  color: var(--text);
+}
+
+.viewer-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.viewer-tab--active {
+  background: var(--accent-button);
+  color: #ffffff;
+  box-shadow: var(--shadow-sm);
+}
+
+.viewer-stage {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  overflow: auto;
+  max-height: 560px;
+}
+
+/* Zoomed, the page is wider than the frame and is dragged into view. */
+.viewer-stage--zoomed {
+  cursor: grab;
+}
+
+.viewer-stage:fullscreen {
+  max-height: none;
+  border-radius: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg-sunken);
+}
+
+.viewer-page {
+  position: relative;
+  margin: 0 auto;
+  line-height: 0;
+}
+
+.viewer-stage .preview {
+  max-height: none;
+}
+
+/* The words as the reader found them, in place over the page. */
+.word-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* The overlay lies on a photograph rather than on an app surface, so its
+   colours are fixed: the theme's soft tints disappear over a bright scan. */
+.word-box {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #4f46e5;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #312e81;
+  font-family: var(--mono);
+  font-size: 7px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+
+.word-box--low {
+  border-color: #d97706;
+  background: rgba(255, 247, 237, 0.82);
+  color: #92400e;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+/* In a title bar the pager shares the row with the other controls, so it
+   gives up the breathing room it has under the page. */
+.pager--compact {
+  gap: 6px;
+}
+
+.pager--compact .icon-btn {
+  width: 26px;
+  height: 26px;
+}
+
+.pager--compact .pager__count {
+  font-size: 12px;
+  gap: 5px;
+}
+
+.pager--compact .pager__current {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+}
+
+.pager__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.pager__current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.pager__sep {
+  color: var(--text-faint);
+}
+
+.thumb-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.page-thumb {
+  position: relative;
+  flex: none;
+  width: 72px;
+  padding: 0;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  cursor: pointer;
+  overflow: hidden;
+  line-height: 0;
+  transition:
+    border-color 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.page-thumb:hover {
+  border-color: var(--border-strong);
+}
+
+.page-thumb--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.page-thumb--failed {
+  border-color: var(--err-border);
+}
+
+.page-thumb--pending .page-thumb__canvas,
+.page-thumb--reading .page-thumb__canvas {
+  opacity: 0.5;
+}
+
+.page-thumb__canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #ffffff;
+}
+
+.page-thumb__num {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  min-width: 15px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.page-thumb--active .page-thumb__num {
+  background: var(--accent-button);
+  border-color: var(--accent-button);
+  color: #ffffff;
+}
+
+/* --------------------------------------------------------------------------
+   Extracted data — the field picker, row status and row actions
+   -------------------------------------------------------------------------- */
+
+.field-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.field-select__input {
+  appearance: none;
+  padding: 8px 30px 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  color: var(--text-body);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.field-select__input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field-select__caret {
+  position: absolute;
+  right: 10px;
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.valid-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 11px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.valid-chip--all {
+  border-color: var(--ok-border);
+  background: var(--ok-soft);
+  color: var(--ok-text);
+}
+
+.view-more {
+  display: flex;
+  justify-content: center;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.view-more__btn {
+  border-radius: var(--radius-full);
+  padding: 7px 18px;
 }
 
 /* --------------------------------------------------------------------------
@@ -1899,29 +2119,6 @@ button {
     font-size: 13px;
   }
 
-  .filter-tabs {
-    width: auto;
-    max-width: 46%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    padding: 2px;
-    display: flex;
-    flex-wrap: nowrap;
-    flex-shrink: 1;
-  }
-
-  .filter-tabs::-webkit-scrollbar {
-    display: none;
-  }
-
-  .filter-tab {
-    flex-shrink: 0;
-    white-space: nowrap;
-    padding: 4px 8px;
-    font-size: 11.5px;
-  }
-
   /* Responsive Data Table */
   .table-responsive {
     border-radius: 8px;
@@ -2041,10 +2238,6 @@ button {
 
   .table-controls__end {
     justify-content: flex-start;
-  }
-
-  .filter-tabs {
-    max-width: none;
   }
 
   .kind-badge {

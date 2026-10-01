@@ -4,7 +4,15 @@ import { extraTables, toTableCsv, type ExportPage } from '../lib/export'
 import { exportBaseName, saveFile } from '../lib/download'
 import { DownloadIcon } from './ExportButtons'
 import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
+import {
+  REVIEW_THRESHOLD,
+  rowViews,
+  type PageRows,
+  type RowView,
+} from './row-status'
 import type { OcrResult } from '../ocr/types'
+
+export type { PageRows } from './row-status'
 
 /* -------------------------------------------------------------------------- */
 /* Fields                                                                      */
@@ -16,6 +24,8 @@ interface FieldsViewProps {
   reviewThreshold?: number
   /** Rows the user has corrected by hand. */
   edited?: ReadonlySet<number>
+  /** Rows the user has accepted as they read. */
+  validated?: ReadonlySet<number>
   onEdit?: (rowIndex: number, cellIndex: number, value: string) => void
   /** Invoice or ticket heading, shown on the right of the toolbar. */
   title: string
@@ -33,20 +43,25 @@ interface FieldsViewProps {
   onOpenPage?: (pageIndex: number) => void
 }
 
-/** One page's rows as the table shows them. */
-export interface PageRows {
-  /** 0-based index in the document. */
-  index: number
-  result: OcrResult
-  edited: ReadonlySet<number>
-}
-
 const EMPTY: Record<OcrResult['kind'], string> = {
   inventory: 'No inventory rows were read.',
   settlements: 'No pack settlements were read.',
   invoice: 'No invoice lines were read.',
   table: 'No table rows were read.',
 }
+
+/** Which rows the table is showing. */
+type FilterMode = 'all' | 'flagged' | 'edited' | 'valid'
+
+const FILTERS: { value: FilterMode; label: string }[] = [
+  { value: 'all', label: 'All Fields' },
+  { value: 'flagged', label: 'Needs Review' },
+  { value: 'edited', label: 'Edited' },
+  { value: 'valid', label: 'Validated' },
+]
+
+/** Rows shown before `View More`. About a screenful on a laptop. */
+const PAGE_SIZE = 12
 
 /** The column that holds the description, which should stay left-aligned. */
 function wideIndex(result: OcrResult): number {
@@ -77,66 +92,12 @@ const CELL_CHARS: Record<ColumnClass, number> = {
   'col--wide': 34,
 }
 
-function rowIsIncomplete(result: OcrResult, row: readonly string[], index: number): boolean {
-  if (isLabelRow(result, index)) return false
-  if (result.kind === 'table') return row.filter((cell) => cell.trim()).length < 2
-  return row.some((cell) => cell.trim() === '')
-}
-
-/** A printed label among the items: one cell by nature, not a row missing data. */
-function isLabelRow(result: OcrResult, index: number): boolean {
-  return result.kind === 'table' && result.tableRows[index]?.label === true
-}
-
-/** One row of one page, with what the table needs to show and filter it. */
-interface RowView {
-  page: PageRows
-  /** Row index within its page. */
-  index: number
-  cells: string[]
-  confidence: number
-  /** Contradicts the page's own arithmetic, or could not be read. */
-  flagged: boolean
-  /** Solved from TOTALS: known, just not read. */
-  solved: boolean
-  /** Flagged, low confidence, or missing cells. */
-  review: boolean
-  edited: boolean
-  label: boolean
-}
-
-function rowViews(page: PageRows, reviewThreshold: number): RowView[] {
-  const { result, edited } = page
-  const issues = (solved: boolean) =>
-    new Set(
-      result.validation
-        .filter((issue) => (issue.code === 'inventory-solved') === solved)
-        .flatMap((issue) => issue.rows),
-    )
-  const flagged = issues(false)
-  const solved = issues(true)
-  const confidences = rowConfidences(result)
-  return rowCells(result).map((cells, index) => {
-    const confidence = confidences[index] ?? 0
-    return {
-      page,
-      index,
-      cells,
-      confidence,
-      flagged: flagged.has(index),
-      solved: solved.has(index),
-      review: flagged.has(index) || confidence < reviewThreshold || rowIsIncomplete(result, cells, index),
-      edited: edited.has(index),
-      label: isLabelRow(result, index),
-    }
-  })
-}
-
 /** The kind's rows under the ticket's own column headers, with its checks above them. */
 export function FieldsView({
   result,
-  reviewThreshold = 0.55,
+  reviewThreshold = REVIEW_THRESHOLD,
   edited = new Set(),
+  validated = new Set(),
   onEdit,
   title,
   onResetEdits,
@@ -149,22 +110,25 @@ export function FieldsView({
   const pageRowCount = rowCells(result).length
 
   const [query, setQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<'all' | 'flagged' | 'edited'>('all')
+  const [filterMode, setFilterMode] = useState<FilterMode>('all')
+  // A long document is read a screenful at a time; the rest is one click away.
+  const [expanded, setExpanded] = useState(false)
   const q = query.trim().toLowerCase()
 
   // A search looks through every page read so far; without one, the table is
   // the page on screen.
+  const own = useMemo<PageRows>(
+    () => ({ index: currentPage, result, edited, validated }),
+    [currentPage, result, edited, validated],
+  )
   const allPages = useMemo<readonly PageRows[]>(
-    () => (pages && pages.length > 1 ? pages : [{ index: currentPage, result, edited }]),
-    [pages, currentPage, result, edited],
+    () => (pages && pages.length > 1 ? pages : [own]),
+    [pages, own],
   )
   const acrossPages = q.length > 0 && allPages.length > 1
   const scope = useMemo(
-    () =>
-      (acrossPages ? allPages : [{ index: currentPage, result, edited }]).flatMap((page) =>
-        rowViews(page, reviewThreshold),
-      ),
-    [acrossPages, allPages, currentPage, result, edited, reviewThreshold],
+    () => (acrossPages ? allPages : [own]).flatMap((page) => rowViews(page, reviewThreshold)),
+    [acrossPages, allPages, own, reviewThreshold],
   )
 
   const { reader, warnings } = result.processingMeta
@@ -183,6 +147,7 @@ export function FieldsView({
       totalRows: scope.length,
       flaggedCount: scope.filter((row) => row.review).length,
       editedCount: scope.filter((row) => row.edited).length,
+      validCount: scope.filter((row) => !row.review).length,
     }),
     [scope],
   )
@@ -192,11 +157,16 @@ export function FieldsView({
       scope.filter((row) => {
         if (filterMode === 'flagged' && !row.review) return false
         if (filterMode === 'edited' && !row.edited) return false
+        if (filterMode === 'valid' && row.review) return false
         return !q || row.cells.some((cell) => cell.toLowerCase().includes(q))
       }),
     [scope, filterMode, q],
   )
   const matchedPages = new Set(filteredRows.map((row) => row.page.index)).size
+  // Rows past the first screenful wait behind `View More`, unless a filter has
+  // already cut the table down to what was asked for.
+  const hidden = Math.max(0, filteredRows.length - PAGE_SIZE)
+  const shownRows = expanded || hidden === 0 ? filteredRows : filteredRows.slice(0, PAGE_SIZE)
 
   const edit = (row: RowView, cellIndex: number, value: string) => {
     if (onEditPage) onEditPage(row.page.index, row.index, cellIndex, value)
@@ -236,7 +206,7 @@ export function FieldsView({
             autoComplete="off"
             spellCheck={false}
             className="search-box__input"
-            placeholder={allPages.length > 1 ? `Search all ${allPages.length} pages...` : 'Filter table rows...'}
+            placeholder={allPages.length > 1 ? `Search all ${allPages.length} pages…` : 'Search extracted data…'}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             aria-label={allPages.length > 1 ? 'Search rows on every page' : 'Filter rows'}
@@ -257,32 +227,33 @@ export function FieldsView({
           )}
           </div>
 
-          <div className="filter-tabs" role="tablist">
-          <button
-            type="button"
-            className={`filter-tab${filterMode === 'all' ? ' filter-tab--active' : ''}`}
-            onClick={() => setFilterMode('all')}
-          >
-            All <span className="tab-badge">{stats.totalRows}</span>
-          </button>
-          {stats.flaggedCount > 0 && (
-            <button
-              type="button"
-              className={`filter-tab filter-tab--warn${filterMode === 'flagged' ? ' filter-tab--active' : ''}`}
-              onClick={() => setFilterMode('flagged')}
+          {/* One picker rather than a tab each: the counts are above the
+              table already, and a row of tabs crowds out the search. */}
+          <div className="field-select">
+            <select
+              className="field-select__input"
+              value={filterMode}
+              aria-label="Which rows to show"
+              onChange={(event) => {
+                setFilterMode(event.target.value as FilterMode)
+                setExpanded(false)
+              }}
             >
-              Needs Review <span className="tab-badge tab-badge--warn">{stats.flaggedCount}</span>
-            </button>
-          )}
-          {stats.editedCount > 0 && (
-            <button
-              type="button"
-              className={`filter-tab filter-tab--ok${filterMode === 'edited' ? ' filter-tab--active' : ''}`}
-              onClick={() => setFilterMode('edited')}
-            >
-              Edited <span className="tab-badge tab-badge--ok">{stats.editedCount}</span>
-            </button>
-          )}
+              {FILTERS.map(({ value, label }) => (
+                <option key={value} value={value}>
+                  {label} ({value === 'all'
+                    ? stats.totalRows
+                    : value === 'flagged'
+                      ? stats.flaggedCount
+                      : value === 'edited'
+                        ? stats.editedCount
+                        : stats.validCount})
+                </option>
+              ))}
+            </select>
+            <svg className="field-select__caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
           </div>
         </div>
 
@@ -337,7 +308,7 @@ export function FieldsView({
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((row, position) => {
+              {shownRows.map((row, position) => {
                 const { page, index: originalIndex, confidence, label } = row
                 const own = page.result
                 const ownHeaders = own.headers
@@ -356,7 +327,7 @@ export function FieldsView({
                   [tone, total, label ? 'fields__row--label' : ''].filter(Boolean).join(' ') ||
                   undefined
                 // A page set out with other columns shows its own titles above its rows.
-                const previous = filteredRows[position - 1]
+                const previous = shownRows[position - 1]
                 const retitle =
                   acrossPages && previous?.page.index !== page.index && !sameHeaders(own)
 
@@ -435,6 +406,21 @@ export function FieldsView({
               })}
             </tbody>
           </table>
+          {hidden > 0 && (
+            <div className="view-more">
+              <button
+                type="button"
+                className="btn btn--sm btn--subtle view-more__btn"
+                onClick={() => setExpanded((open) => !open)}
+                aria-expanded={expanded}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points={expanded ? '18 15 12 9 6 15' : '6 9 12 15 18 9'} />
+                </svg>
+                {expanded ? 'View Less' : `View More (${hidden})`}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -446,23 +432,6 @@ function isNumericHeader(header: string): boolean {
   return /\b(qty|quantity|price|prc|amount|amt|ext|extended|total|pack)\b/i.test(header)
 }
 
-function rowConfidences(result: OcrResult): number[] {
-  switch (result.kind) {
-    case 'inventory':
-      return result.rows.map((row) => row.confidence)
-    case 'settlements':
-      return result.settlements.map((row) => row.confidence)
-    case 'invoice':
-      return result.fields.map((row) => row.confidence)
-    case 'table':
-      return result.tableRows.map((row) => row.confidence)
-    default: {
-      const unreachable: never = result.kind
-      return unreachable
-    }
-  }
-}
-
 /* -------------------------------------------------------------------------- */
 /* Tables printed under the main one                                          */
 /* -------------------------------------------------------------------------- */
@@ -472,26 +441,37 @@ interface ExtraTablesProps {
   pages: readonly ExportPage[]
   /** Pages in the document: 1 for an image. */
   total: number
+  /** Index of the page on screen within the document. */
+  currentPage: number
   /** The uploaded file's name, for the downloads. */
   fileName: string | null
 }
 
 /**
- * The tables a page prints under its own: an invoice's `Previous Balances`,
- * a recap of the order by category.
+ * The tables the page on screen prints under its own: an invoice's
+ * `Previous Balances`, a recap of the order by category.
  *
- * Each is shown and downloaded as itself. Reading them into the document's
- * table would file their dates as descriptions and their amounts as
- * quantities, which is what the reader used to do.
+ * Shown for that page and in the order it prints them, beside the rows of
+ * the same page: a table printed on page 3 is not something page 2 has. The
+ * download is the whole document's, since a table repeated on every page is
+ * one table to whoever reads the file.
  */
-export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
+export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTablesProps) {
   const tables = useMemo(() => extraTables(pages), [pages])
-  if (tables.length === 0) return null
+  const page = currentPage + 1
+  const onPage = useMemo(
+    () =>
+      tables
+        .map((table) => ({ table, rows: table.rows.filter((row) => row.page === page) }))
+        .filter(({ rows }) => rows.length > 0),
+    [tables, page],
+  )
+  if (onPage.length === 0) return null
   const base = exportBaseName(fileName, 'receipt')
 
   return (
     <>
-      {tables.map((table) => (
+      {onPage.map(({ table, rows }) => (
         <div className="card" key={`${table.slug}-${table.headers.join('|')}`}>
           <div className="card__head">
             <div className="export-title-group">
@@ -502,7 +482,10 @@ export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
               </svg>
               <h2 className="card__title">{table.title}</h2>
               <span className="count">
-                {table.rows.length} {table.rows.length === 1 ? 'row' : 'rows'}
+                {rows.length} {rows.length === 1 ? 'row' : 'rows'}
+                {/* The same table printed on other pages too: the download
+                    carries all of them, so say how many. */}
+                {table.rows.length > rows.length ? ` · ${table.rows.length} in all` : ''}
               </span>
             </div>
             <div className="btn-row">
@@ -517,7 +500,11 @@ export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
                     `${base}-${table.slug}.csv`,
                   )
                 }
-                title={`Download ${table.title} as a CSV spreadsheet`}
+                title={
+                  table.rows.length > rows.length
+                    ? `Download ${table.title} from every page as a CSV spreadsheet`
+                    : `Download ${table.title} as a CSV spreadsheet`
+                }
               >
                 <DownloadIcon />
                 CSV
@@ -529,7 +516,6 @@ export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
               <table className="fields">
                 <thead>
                   <tr>
-                    {total > 1 && <th className="num">Page</th>}
                     {table.headers.map((header, index) => (
                       <th key={`${header}-${index}`} className={index === 0 ? 'col--text' : 'num'}>
                         {header}
@@ -538,9 +524,8 @@ export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {table.rows.map((row, index) => (
+                  {rows.map((row, index) => (
                     <tr key={index}>
-                      {total > 1 && <td className="num">{row.page}</td>}
                       {table.headers.map((header, cell) => (
                         <td key={`${header}-${cell}`} className={cell === 0 ? 'col--text' : 'num'}>
                           {row.cells[cell] ?? ''}

@@ -261,7 +261,7 @@ export function readColumnTables(
   // is what is printed between its titles and the next table's.
   const headers = [header]
   for (let found = header; headers.length < 8; ) {
-    const next = findHeader(usable.filter((word) => word.y > found.bottom + lineHeight * 0.5))
+    const next = findHeader(usable.filter((word) => word.y > found.bottom + lineHeight * 0.5), true)
     if (!next || next.columns.length < 3 || next.top <= found.top) break
     headers.push(next)
     found = next
@@ -373,6 +373,7 @@ const HEADER_WORD =
  */
 function findHeader(
   words: readonly WordBox[],
+  topmost = false,
 ): { columns: HeaderColumn[]; words: WordBox[]; top: number; bottom: number } | null {
   const hits = words.filter((word) => HEADER_WORD.test(word.text.trim()) || /upc|part#|description/i.test(word.text))
   if (hits.length < 3) return null
@@ -404,18 +405,37 @@ function findHeader(
       return hits.filter((word) => Math.abs(word.y + word.height / 2 - anchorCenter) <= reach)
     })
     .sort((a, b) => b.length - a.length)
-  const best = groups.find(
-    (group) => !bandOf(group).words.some((word) => /^\$?[\d,]*\d\.\d{2}$/.test(word.text.trim())),
-  )
-  if (!best || best.length < 3) return null
+  const titles = (group: readonly WordBox[]) => {
+    if (group.length < 3) return null
+    const { bottom, words: headerWords } = bandOf(group)
+    if (headerWords.some((word) => /^\$?[\d,]*\d\.\d{2}$/.test(word.text.trim()))) return null
+    const columns = groupHeaderColumns(headerWords)
+    if (columns.length < 3) return null
+    const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
+    if (scoreHeader(columns, nextLine, 4) < 28) return null
+    return {
+      columns,
+      words: headerWords,
+      top: Math.min(...headerWords.map((word) => word.y)),
+      bottom,
+    }
+  }
 
-  const { bottom, words: headerWords } = bandOf(best)
-  const columns = groupHeaderColumns(headerWords)
-  if (columns.length < 3) return null
-  const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
-  const score = scoreHeader(columns, nextLine, 4)
-  if (score < 28) return null
-  return { columns, words: headerWords, top: Math.min(...headerWords.map((word) => word.y)), bottom }
+  // The page's own titles are the largest group of them. Looking for the next
+  // table instead, the one that matters is the next one down the page: a
+  // bigger header further on would read everything between as its own.
+  if (!topmost) {
+    const best = groups.find((group) => titles(group) !== null)
+    return best ? titles(best) : null
+  }
+  const down = [...groups].sort(
+    (a, b) => Math.min(...a.map((word) => word.y)) - Math.min(...b.map((word) => word.y)) || b.length - a.length,
+  )
+  for (const group of down) {
+    const header = titles(group)
+    if (header) return header
+  }
+  return null
 }
 
 /**

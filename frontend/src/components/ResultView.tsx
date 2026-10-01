@@ -1,5 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 
+import { extraTables, toTableCsv, type ExportPage } from '../lib/export'
+import { exportBaseName, saveFile } from '../lib/download'
+import { DownloadIcon } from './ExportButtons'
 import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -458,4 +461,99 @@ function rowConfidences(result: OcrResult): number[] {
       return unreachable
     }
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tables printed under the main one                                          */
+/* -------------------------------------------------------------------------- */
+
+interface ExtraTablesProps {
+  /** Every page read so far, in page order. */
+  pages: readonly ExportPage[]
+  /** Pages in the document: 1 for an image. */
+  total: number
+  /** The uploaded file's name, for the downloads. */
+  fileName: string | null
+}
+
+/**
+ * The tables a page prints under its own: an invoice's `Previous Balances`,
+ * a recap of the order by category.
+ *
+ * Each is shown and downloaded as itself. Reading them into the document's
+ * table would file their dates as descriptions and their amounts as
+ * quantities, which is what the reader used to do.
+ */
+export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
+  const tables = useMemo(() => extraTables(pages), [pages])
+  if (tables.length === 0) return null
+  const base = exportBaseName(fileName, 'receipt')
+
+  return (
+    <>
+      {tables.map((table) => (
+        <div className="card" key={`${table.slug}-${table.headers.join('|')}`}>
+          <div className="card__head">
+            <div className="export-title-group">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="9" x2="9" y2="21" />
+              </svg>
+              <h2 className="card__title">{table.title}</h2>
+              <span className="count">
+                {table.rows.length} {table.rows.length === 1 ? 'row' : 'rows'}
+              </span>
+            </div>
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() =>
+                  saveFile(
+                    // The byte-order mark tells Excel the file is UTF-8.
+                    `﻿${toTableCsv(table, total)}`,
+                    'text/csv;charset=utf-8;',
+                    `${base}-${table.slug}.csv`,
+                  )
+                }
+                title={`Download ${table.title} as a CSV spreadsheet`}
+              >
+                <DownloadIcon />
+                CSV
+              </button>
+            </div>
+          </div>
+          <div className="card__body card__body--compact">
+            <div className="table-responsive">
+              <table className="fields">
+                <thead>
+                  <tr>
+                    {total > 1 && <th className="num">Page</th>}
+                    {table.headers.map((header, index) => (
+                      <th key={`${header}-${index}`} className={index === 0 ? 'col--text' : 'num'}>
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((row, index) => (
+                    <tr key={index}>
+                      {total > 1 && <td className="num">{row.page}</td>}
+                      {table.headers.map((header, cell) => (
+                        <td key={`${header}-${cell}`} className={cell === 0 ? 'col--text' : 'num'}>
+                          {row.cells[cell] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  )
 }

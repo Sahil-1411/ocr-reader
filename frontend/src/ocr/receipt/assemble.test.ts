@@ -13,6 +13,7 @@ const settlements: OcrResult = {
   ],
   fields: [],
   tableRows: [],
+  tables: [],
   validation: [],
   skipped: [],
   processingMeta: {

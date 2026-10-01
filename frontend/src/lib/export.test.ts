@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { toCsv, toDocumentJson, toSkippedCsv, toSkippedLog, type ExportPage } from './export'
+import {
+  extraTables,
+  toCsv,
+  toDocumentJson,
+  toSkippedCsv,
+  toSkippedLog,
+  toTableCsv,
+  type ExportPage,
+} from './export'
 import { toPublicJson, withCell } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -12,6 +20,7 @@ function table(headers: string[], rows: string[][], extra: Partial<OcrResult> = 
     settlements: [],
     fields: [],
     tableRows: rows.map((cells) => ({ cells, confidence: 1 })),
+    tables: [{ headers, rows: rows.map((cells) => ({ cells, confidence: 1 })) }],
     validation: [],
     skipped: [],
     processingMeta: {
@@ -216,6 +225,62 @@ describe('columns that could collide', () => {
       'Page,Game-Pack,Name,Column 3',
       '1,875-010840,STACKED,02/28/26',
       '2,833-129990,CASH,02/27/26',
+    ])
+  })
+})
+
+describe('extraTables', () => {
+  const withExtra = (page: number, rows: string[][]): ExportPage => ({
+    page,
+    result: {
+      ...table(HEADERS, [['1', 'WIDGET', '2.00']]),
+      tables: [
+        { headers: HEADERS, rows: [{ cells: ['1', 'WIDGET', '2.00'], confidence: 1 }] },
+        {
+          title: 'Previous Balances',
+          headers: ['Date', 'Invoice', 'Balance'],
+          rows: rows.map((cells) => ({ cells, confidence: 1 })),
+        },
+      ],
+    },
+  })
+
+  it('gathers the same table across pages, and names its download', () => {
+    const tables = extraTables([
+      withExtra(1, [['08/06/2026', '93354', '$52.65']]),
+      withExtra(2, [['08/13/2026', '93363', '$35.90']]),
+    ])
+    expect(tables).toHaveLength(1)
+    expect(tables[0]?.title).toBe('Previous Balances')
+    expect(tables[0]?.slug).toBe('previous-balances')
+    expect(tables[0]?.rows).toEqual([
+      { page: 1, cells: ['08/06/2026', '93354', '$52.65'] },
+      { page: 2, cells: ['08/13/2026', '93363', '$35.90'] },
+    ])
+  })
+
+  it('writes it as its own CSV, with a page column only when there are pages', () => {
+    const [many] = extraTables([withExtra(1, [['08/06/2026', '93354', '$52.65']])])
+    expect(toTableCsv(many!, 2).split('\r\n')).toEqual([
+      'Page,Date,Invoice,Balance',
+      '1,08/06/2026,93354,$52.65',
+    ])
+    expect(toTableCsv(many!, 1).split('\r\n')).toEqual([
+      'Date,Invoice,Balance',
+      '08/06/2026,93354,$52.65',
+    ])
+  })
+
+  it(`keeps the document export to the document's own table`, () => {
+    const json = toDocumentJson([withExtra(1, [['08/06/2026', '93354', '$52.65']])], 1)
+    // The rows are the invoice's; the balances are beside them, not among them.
+    expect(json?.rows).toEqual([{ QTY: '1', DESCRIPTION: 'WIDGET', PRICE: '2.00' }])
+    expect(json && 'tables' in json ? json.tables : undefined).toEqual([
+      {
+        title: 'Previous Balances',
+        headers: ['Date', 'Invoice', 'Balance'],
+        rows: [{ Date: '08/06/2026', Invoice: '93354', Balance: '$52.65' }],
+      },
     ])
   })
 })

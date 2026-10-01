@@ -16,6 +16,13 @@ export interface ExportPage {
   result: OcrResult
 }
 
+/** An extra table as the JSON carries it. */
+export interface ExtraTableJson {
+  title: string
+  headers: string[]
+  rows: Array<Record<string, string | number>>
+}
+
 export interface DocumentJson {
   /** The pages' kind when they agree, `mixed` when they do not. */
   kind: ReceiptKind | 'mixed'
@@ -28,6 +35,11 @@ export interface DocumentJson {
   headers: string[]
   /** Each row keyed by its headers, with the page it was printed on. */
   rows: Array<Record<string, string | number>>
+  /**
+   * Tables printed under the pages' own, such as an invoice's
+   * `Previous Balances`. Absent when the document prints none.
+   */
+  tables?: ExtraTableJson[]
 }
 
 export type ExportJson = ReturnType<typeof toPublicJson> | DocumentJson
@@ -39,7 +51,23 @@ export type ExportJson = ReturnType<typeof toPublicJson> | DocumentJson
 export function toDocumentJson(pages: readonly ExportPage[], total: number): ExportJson | null {
   const [first] = pages
   if (!first) return null
-  if (total <= 1) return toPublicJson(first.result)
+  const extras = extraTables(pages)
+  const tables =
+    extras.length > 0
+      ? {
+          tables: extras.map((table) => ({
+            title: table.title,
+            headers: [...table.headers],
+            rows: table.rows.map((row) => ({
+              ...(total > 1 ? { page: row.page } : {}),
+              ...Object.fromEntries(
+                table.headers.map((header, index) => [header, row.cells[index] ?? '']),
+              ),
+            })),
+          })),
+        }
+      : {}
+  if (total <= 1) return { ...toPublicJson(first.result), ...tables }
 
   const layout = documentLayout(pages)
   const title = pages.map(({ result }) => result.title).find(Boolean)
@@ -63,6 +91,7 @@ export function toDocumentJson(pages: readonly ExportPage[], total: number): Exp
         return row
       })
     }),
+    ...tables,
   }
 }
 
@@ -263,6 +292,72 @@ export function toSkippedCsv(
       row.text,
       row.confidence === undefined ? '' : row.confidence.toFixed(2),
     ])
+  }
+  return csvLines(lines)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Tables printed under the main one                                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A table printed under the page's own, gathered across the pages it appears
+ * on: an invoice's `Previous Balances`, a recap of the order by category.
+ *
+ * Kept out of the data export, which is the document's own table, and
+ * downloaded on its own.
+ */
+export interface ExtraTable {
+  /** The heading printed over it, or a name made from its columns. */
+  title: string
+  /** That title as a file name's tail: `previous-balances`. */
+  slug: string
+  headers: string[]
+  /** Its rows, each with the page it was printed on. */
+  rows: Array<{ page: number; cells: string[] }>
+}
+
+/**
+ * Every table printed under the pages' own, in the order they appear.
+ *
+ * The same table printed on several pages is one table here, so a balance
+ * list repeated per page downloads once with a `Page` column.
+ */
+export function extraTables(pages: readonly ExportPage[]): ExtraTable[] {
+  const found = new Map<string, ExtraTable>()
+  for (const { page, result } of pages) {
+    result.tables.slice(1).forEach((table, index) => {
+      // A table with no heading of its own is named for its first column,
+      // which is what it is a table of — `Category Description`, `Date`.
+      const title = table.title?.trim() || table.headers[0]?.trim() || `Table ${index + 2}`
+      const key = `${title}\u0000${table.headers.join('\u0000')}`
+      const existing = found.get(key)
+      const rows = table.rows.map((row) => ({ page, cells: [...row.cells] }))
+      if (existing) existing.rows.push(...rows)
+      else found.set(key, { title, slug: slugify(title), headers: [...table.headers], rows })
+    })
+  }
+  return [...found.values()]
+}
+
+/** `Previous Balances` → `previous-balances`, for a file name. */
+function slugify(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return slug || 'table'
+}
+
+/** One extra table as CSV, with a `Page` column when the document has pages. */
+export function toTableCsv(table: ExtraTable, total: number): string {
+  const paged = total > 1
+  const pageTitle = table.headers.includes('Page') ? 'PDF Page' : 'Page'
+  const lines: string[][] = [paged ? [pageTitle, ...table.headers] : [...table.headers]]
+  for (const row of table.rows) {
+    const cells = table.headers.map((_, index) => row.cells[index] ?? '')
+    lines.push(paged ? [String(row.page), ...cells] : cells)
   }
   return csvLines(lines)
 }

@@ -48,6 +48,25 @@ export interface TableRow {
 }
 
 /**
+ * One table printed on the page, under its own column titles.
+ *
+ * A page is not one table by nature: an invoice prints its items, and under
+ * them the customer's previous balances under titles of their own.
+ */
+export interface TableBlock {
+  /**
+   * The heading printed over this table, when it has one of its own. The
+   * page's first table is the page's own and has none.
+   */
+  title?: string
+  /** The column titles as printed, left to right. */
+  headers: string[]
+  rows: TableRow[]
+  /** Left edge of each column, in page pixels. */
+  columnBounds?: number[]
+}
+
+/**
  * One instant-inventory row, matching the printed header
  * Game / Name / Int / Rec / Act / Set.
  */
@@ -150,6 +169,13 @@ export interface OcrResult {
   fields: ReceiptField[]
   /** Column-aligned rows. Filled when {@link kind} is `table`. */
   tableRows: TableRow[]
+  /**
+   * Every table printed on the page, in printed order, when {@link kind} is
+   * `table`. The first is the page's own — the one {@link headers} and
+   * {@link tableRows} carry — and the rest are tables printed under it, such
+   * as an invoice's `Previous Balances`.
+   */
+  tables: TableBlock[]
   /**
    * Left edge of each printed column, in page pixels. Present for a column
    * table so a later page of the same PDF can reuse the header.

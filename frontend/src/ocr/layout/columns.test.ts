@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { assembleReceipt, rowCells, toPublicJson } from '../receipt/assemble'
-import { isLotteryHeader, readColumnTable } from './columns'
+import { isLotteryHeader, readColumnTable, readColumnTables } from './columns'
 import type { WordBox } from './rows'
 
 function word(text: string, x: number, y: number, width = Math.max(12, text.length * 8)): WordBox {
@@ -444,6 +444,51 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('reads a table printed under the invoice as a table of its own', () => {
+    // The invoice prints its items, and under them `Previous Balances` with
+    // titles of its own. Read under the invoice's columns, its dates became
+    // descriptions and its balances quantities; it is its own table.
+    const box = wholesaleBox
+    const tables = readColumnTables([
+      box('No', 49, 350, 31),
+      box('Code', 135, 350, 56),
+      box('Description', 497, 350, 123),
+      box('Price', 1100, 350, 56),
+      box('Quantity', 1430, 350, 101),
+      box('Total', 1700, 350, 60),
+      box('1', 55, 400, 14),
+      box('12262', 135, 400, 76),
+      box('4 SEASONS MOTOR OIL', 497, 400, 300),
+      box('$17.95', 1100, 400, 76),
+      box('3', 1480, 400, 14),
+      box('$53.85', 1700, 400, 76),
+      // Its own heading, then titles with the figures set well right of them.
+      box('Previous', 711, 600, 135),
+      box('Balances', 853, 600, 135),
+      box('Date', 318, 660, 54),
+      box('Invoice', 825, 660, 87),
+      box('Balance', 1325, 660, 96),
+      box('08/06/2026', 293, 710, 104),
+      box('93354', 1041, 710, 58),
+      box('$52.65', 1561, 710, 64),
+      box('08/13/2026', 293, 750, 104),
+      box('93363', 1041, 750, 58),
+      box('$35.90', 1561, 750, 64),
+    ])
+
+    expect(tables.map((table) => [table.title, table.headers])).toEqual([
+      [undefined, ['No', 'Code', 'Description', 'Price', 'Quantity', 'Total']],
+      ['Previous Balances', ['Date', 'Invoice', 'Balance']],
+    ])
+    expect(tables[0]?.rows.map((row) => row.cells)).toEqual([
+      ['1', '12262', '4 SEASONS MOTOR OIL', '$17.95', '3', '$53.85'],
+    ])
+    expect(tables[1]?.rows.map((row) => row.cells)).toEqual([
+      ['08/06/2026', '93354', '$52.65'],
+      ['08/13/2026', '93363', '$35.90'],
+    ])
+  })
+
   it('keeps a short UPC in its own column, not on the end of the size', () => {
     // Printed as on the wholesale invoice: the size and the UPC are a space
     // and a bit apart, which makes them one field, and the UPC starts well
@@ -604,7 +649,7 @@ describe('assembleReceipt column tables', () => {
     expect(rowCells(result)).toEqual([])
     // Nothing is lost quietly: the recap is in the log, with the total named.
     expect(result.skipped.map(({ reason, text }) => [reason, text])).toEqual([
-      ['unplaced', 'CATEGORY  DESCRIPTION LINES UNITS  YOUR  COST'],
+      ['unplaced', 'CATEGORY  DESCRIPTION  LINES UNITS  YOUR COST'],
       ['unplaced', 'JUUL  4 42  2,564.28'],
       ['unplaced', 'SNUS  24 274  5,460.00'],
       ['summary', 'INVOICE  TOTAL:  13,134.09'],

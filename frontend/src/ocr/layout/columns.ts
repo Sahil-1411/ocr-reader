@@ -17,6 +17,12 @@ export interface ColumnTable {
   bounds: number[]
   /** Printed lines the reader left out, and notes it cut, in printed order. */
   skipped: SkippedLine[]
+  /**
+   * The heading printed over this table, when it has one of its own:
+   * `Previous Balances` under an invoice's items. The first table on a page
+   * is the page's own and has none.
+   */
+  title?: string
 }
 
 /** Column edges learned from an earlier page of the same document. */
@@ -43,15 +49,28 @@ export function isLotteryHeader(headers: readonly string[]): boolean {
   return inventory || settlements
 }
 
-/**
- * The column table under the printed header, or null when the page does not
- * have one.
- */
+/** The first column table on the page, or null when it has none. */
 export function readColumnTable(
   words: readonly WordBox[],
   overlapRatio = 0.5,
   guide?: ColumnGuide | null,
 ): ColumnTable | null {
+  return readColumnTables(words, overlapRatio, guide)[0] ?? null
+}
+
+/**
+ * Every column table printed on the page, in printed order.
+ *
+ * A page is not one table by nature: an invoice prints its items, and under
+ * them the customer's previous balances under titles of their own. Reading
+ * the second under the first's columns files its dates as descriptions and
+ * its amounts as quantities, so each printed header gets its own table.
+ */
+export function readColumnTables(
+  words: readonly WordBox[],
+  overlapRatio = 0.5,
+  guide?: ColumnGuide | null,
+): ColumnTable[] {
   const usable = words.filter(
     (word) =>
       word.text.trim().length > 0 &&
@@ -60,12 +79,12 @@ export function readColumnTable(
       // A box that is not on the page cannot sit under a title.
       Number.isFinite(word.x + word.y + word.width + word.height),
   )
-  if (usable.length < 4) return null
+  if (usable.length < 4) return []
 
   const lines = groupIntoLines(usable, overlapRatio)
   const header = findHeader(usable)
   const guided = header ? null : usableGuide(guide)
-  if (!header && !guided) return null
+  if (!header && !guided) return []
 
   const lineHeight = median(usable.map((word) => word.height)) || 12
 
@@ -81,12 +100,14 @@ export function readColumnTable(
     titleWords: readonly WordBox[],
     below: number,
     titled: boolean,
+    until = Infinity,
   ): ColumnTable {
   const headerWords = new Set(titleWords)
   const body = lines.filter(
     (line) =>
       !line.some((word) => headerWords.has(word)) &&
-      lineBand(line).top >= below - 2,
+      lineBand(line).top >= below - 2 &&
+      lineBand(line).top < until,
   )
   const printed = titled ? columnBounds(columns) : (guided?.bounds ?? [])
   const layout = learnLayout(body, columns, printed, lineHeight, titled)
@@ -226,37 +247,103 @@ export function readColumnTable(
 
   if (!header) {
     const columns = guided?.columns ?? []
-    if (columns.length < 3) return null
+    if (columns.length < 3) return []
     // A guide's columns are edges an earlier page learned, not titles printed
     // on this one. Their extents are made up, so nothing is placed by them.
     const table = readUnder(columns, [], -Infinity, false)
-    return priced(table) ? table : null
+    return priced(table) ? [table] : []
   }
 
-  if (header.columns.length < 3) return null
-  const printedTable = readUnder(header.columns, header.words, header.bottom, true)
-  if (priced(printedTable)) return printedTable
+  if (header.columns.length < 3) return []
 
-  // The last page of this invoice prints the same column titles over a block
-  // that is not the invoice's items: a recap of the order by category, under
-  // titles of its own. Read that block by those titles rather than letting a
-  // page of its own table fall through to the label-and-amount reader, which
-  // pairs the letterhead with whatever figure is nearest.
-  const inner = findHeader(usable.filter((word) => word.y > header.bottom))
-  if (inner && inner.columns.length >= 3) {
-    const innerTable = readUnder(inner.columns, inner.words, inner.bottom, true)
-    if (priced(innerTable)) {
-      // What the page prints above the recap is page furniture, and the log
-      // is the only place that says so.
-      const above = printedTable.skipped.filter((line) => line.y < inner.bottom)
-      return { ...innerTable, skipped: [...above, ...innerTable.skipped].sort((a, b) => a.y - b.y) }
+  // A page can print more than one table: an invoice's items, and under them
+  // the customer's previous balances with titles of their own. Each one's body
+  // is what is printed between its titles and the next table's.
+  const headers = [header]
+  for (let found = header; headers.length < 8; ) {
+    const next = findHeader(usable.filter((word) => word.y > found.bottom + lineHeight * 0.5))
+    if (!next || next.columns.length < 3 || next.top <= found.top) break
+    headers.push(next)
+    found = next
+  }
+
+  const tables = headers.map((printed, index) => {
+    const table = readUnder(
+      printed.columns,
+      printed.words,
+      printed.bottom,
+      true,
+      headers[index + 1]?.top ?? Infinity,
+    )
+    const title = index === 0 ? undefined : titleAbove(printed.top, lines, lineHeight)
+    return title ? { ...table, title } : table
+  })
+
+  // Titles with nothing priced under them are not a table of their own. What
+  // they cover still happened on the page, so it goes to the log — the titles
+  // included — rather than falling out of the reading altogether.
+  const kept: ColumnTable[] = []
+  const orphaned: SkippedLine[] = []
+  tables.forEach((table, index) => {
+    if (index === 0 || priced(table)) {
+      kept.push(table)
+      return
     }
-  }
+    const printed = headers[index]!
+    orphaned.push(
+      {
+        reason: 'unplaced',
+        text: printed.columns.map((column) => column.label).join('  '),
+        confidence: meanConfidence(printed.words),
+        y: printed.top,
+      },
+      ...table.rows.map((row) => ({
+        reason: 'unplaced' as const,
+        text: row.cells.filter((cell) => cell.trim()).join('  '),
+        confidence: row.confidence,
+        y: printed.top,
+      })),
+      ...table.skipped,
+    )
+  })
 
-  // Titles printed and nothing priced under them: a page of this table that
-  // carries no items. An empty table says that; null would hand the page to a
-  // reader that would invent rows out of the letterhead.
-  return printedTable
+  const [first] = kept
+  if (!first) return []
+  // The page's first table carries the page's log. (One table with nothing
+  // priced under it is a page of this table that holds no items — an empty
+  // table says so, where nothing would hand the page to a reader that invents
+  // rows out of the letterhead.)
+  if (orphaned.length > 0) {
+    kept[0] = { ...first, skipped: [...first.skipped, ...orphaned].sort((a, b) => a.y - b.y) }
+  }
+  return kept
+}
+
+/**
+ * The heading a table is printed under: `Previous Balances` over the dates
+ * and amounts, centred on a line of its own.
+ *
+ * A heading names the table in a few words and carries no figure — a row of
+ * the table above, or that table's totals line, is neither.
+ */
+function titleAbove(
+  top: number,
+  lines: readonly (readonly WordBox[])[],
+  lineHeight: number,
+): string | undefined {
+  let best: string | undefined
+  for (const line of lines) {
+    const band = lineBand(line)
+    if (band.bottom > top - 1 || band.bottom < top - lineHeight * 3) continue
+    const text = line
+      .map((word) => word.text.trim())
+      .filter((word) => word.length > 0)
+      .join(' ')
+    if (!/[A-Za-z]/.test(text) || text.split(/\s+/).length > 5) continue
+    if (/\d[.,]\d{2}|[$€£]/.test(text)) continue
+    best = text
+  }
+  return best
 }
 
 function usableGuide(
@@ -273,7 +360,7 @@ function usableGuide(
 }
 
 const HEADER_WORD =
-  /^(?:qty|quantity|case|unt|unit|item#?|items?|part#?|upc|sku|description|pack|prc|price|extended|amount|total|ordered|shipped|customer|tax|per|oos|qos|sub-?)$/i
+  /^(?:qty|quantity|case|unt|unit|item#?|items?|part#?|upc|sku|description|pack|prc|price|extended|amount|total|ordered|shipped|customer|tax|per|oos|qos|sub-?|code|date|dated|invoice#?|balance|charge|credit|debit|category|lines?|units?|cost)$/i
 
 /**
  * The printed column titles, including a header stacked on two baselines
@@ -286,7 +373,7 @@ const HEADER_WORD =
  */
 function findHeader(
   words: readonly WordBox[],
-): { columns: HeaderColumn[]; words: WordBox[]; bottom: number } | null {
+): { columns: HeaderColumn[]; words: WordBox[]; top: number; bottom: number } | null {
   const hits = words.filter((word) => HEADER_WORD.test(word.text.trim()) || /upc|part#|description/i.test(word.text))
   if (hits.length < 3) return null
 
@@ -328,7 +415,7 @@ function findHeader(
   const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
   const score = scoreHeader(columns, nextLine, 4)
   if (score < 28) return null
-  return { columns, words: headerWords, bottom }
+  return { columns, words: headerWords, top: Math.min(...headerWords.map((word) => word.y)), bottom }
 }
 
 /**
@@ -645,14 +732,29 @@ function learnLayout(
   // Item rows are recognisable under rough edges: a quantity and a price
   // survive a boundary in the wrong place, only the text between them moves.
   // A totals line has that shape too, and is not an item.
-  const items = body.filter((line) => {
-    const cells = bucketsForLine(line, columns, printed, lineHeight, titled).map(joinWords)
-    return isLineItem(cells) && !isSummary(cells, true)
-  })
+  const itemsUnder = (edges: readonly number[]) =>
+    body.filter((line) => {
+      const cells = bucketsForLine(line, columns, edges, lineHeight, titled).map(joinWords)
+      return isLineItem(cells) && !isSummary(cells, true)
+    })
+  let anchors = printed
+  let items = itemsUnder(anchors)
+  // A title's own edges assume its values follow it. A table that sets them
+  // right of their titles instead — `Invoice` over numbers a hand's width
+  // further on — puts two columns in one cell, and then no row reads as a
+  // row. The body's own gutters say where the columns are in that case.
+  if (items.length === 0 && titled) {
+    const guessed = gutterBounds(body, columns, printed, lineHeight)
+    const retry = itemsUnder(guessed)
+    if (retry.length > 0) {
+      anchors = guessed
+      items = retry
+    }
+  }
   const charWidth = characterWidth(items.flat()) || lineHeight * 0.5
-  if (items.length === 0) return { bounds: [...printed], profiles: [], charWidth, items: new Set() }
+  if (items.length === 0) return { bounds: [...anchors], profiles: [], charWidth, items: new Set() }
 
-  const bounds = titled ? refineBounds(printed, columns, items, charWidth, lineHeight) : [...printed]
+  const bounds = titled ? refineBounds(anchors, columns, items, charWidth, lineHeight) : [...anchors]
   const filled: WordBox[][][] = columns.map(() => [])
   for (const line of items) {
     bucketsForLine(line, columns, bounds, lineHeight, titled).forEach((bucket, index) => {
@@ -775,6 +877,39 @@ function typicalGap(
  * that, one row in ten may intrude, and on a page of three items or more one
  * row; failing that too, the printed edge stands.
  */
+/**
+ * Column edges taken from the body's own ink: the widest clear gutter between
+ * one title and the next.
+ *
+ * The titles still say which column is which and roughly where; this only
+ * says where one ends and the next begins, for a table that sets its values
+ * somewhere other than under its titles.
+ */
+function gutterBounds(
+  body: readonly WordBox[][],
+  columns: readonly HeaderColumn[],
+  printed: readonly number[],
+  lineHeight: number,
+): number[] {
+  const inked = union(body.flat().map((word) => [word.x, word.x + word.width] as const))
+  const bounds = [...printed]
+  for (let index = 1; index < columns.length; index += 1) {
+    const from = columns[index - 1]?.x ?? -Infinity
+    const to = columns[index]?.right ?? Infinity
+    let widest: { start: number; end: number } | null = null
+    for (let gap = 1; gap < inked.length; gap += 1) {
+      const start = Math.max(inked[gap - 1]![1], from)
+      const end = Math.min(inked[gap]![0], to)
+      if (end <= start) continue
+      if (!widest || end - start > widest.end - widest.start) widest = { start, end }
+    }
+    if (widest && widest.end - widest.start >= lineHeight * 0.5) {
+      bounds[index] = (widest.start + widest.end) / 2
+    }
+  }
+  return bounds
+}
+
 function refineBounds(
   printed: readonly number[],
   columns: readonly HeaderColumn[],

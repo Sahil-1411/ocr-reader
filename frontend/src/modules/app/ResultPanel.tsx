@@ -1,4 +1,4 @@
-import { FieldsView } from '../../components/ResultView'
+import { ExtraTables, FieldsView } from '../../components/ResultView'
 import { resultTitle, type ReceiptSession } from './types'
 
 /** The rows for the page on screen, or why that page has none yet. */
@@ -12,6 +12,8 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
     isPdfMode,
     pdfPages,
     tablePages,
+    exportPages,
+    fileName,
     onEditPage,
     resetEdits,
     switchPdfPage,
@@ -69,6 +71,13 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
           </div>
         </div>
       )}
+      {/* A page prints more than one table when it prints its own and, under
+          it, something like `Previous Balances`. Each is itself. */}
+      <ExtraTables
+        pages={exportPages}
+        total={isPdfMode ? pdfPages.length : 1}
+        fileName={fileName}
+      />
     </div>
   )
 }

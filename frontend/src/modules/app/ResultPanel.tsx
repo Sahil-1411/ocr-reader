@@ -1,4 +1,4 @@
-import { FieldsView, JsonView } from '../../components/ResultView'
+import { FieldsView, JsonView, SkippedView } from '../../components/ResultView'
 import { resultTitle, type ReceiptSession } from './types'
 
 /** The rows for the page on screen, or why that page has none yet. */
@@ -13,6 +13,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
     pdfPages,
     tablePages,
     exportPages,
+    failures,
     fileName,
     onEditPage,
     resetEdits,
@@ -72,12 +73,21 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
         </div>
       )}
       {exportPages.length > 0 && (
-        <JsonView
-          pages={exportPages}
-          total={isPdfMode ? pdfPages.length : 1}
-          reading={busy}
-          fileName={fileName}
-        />
+        <>
+          <JsonView
+            pages={exportPages}
+            total={isPdfMode ? pdfPages.length : 1}
+            reading={busy}
+            fileName={fileName}
+          />
+          <SkippedView
+            pages={exportPages}
+            total={isPdfMode ? pdfPages.length : 1}
+            failures={failures}
+            reading={busy}
+            fileName={fileName}
+          />
+        </>
       )}
     </div>
   )

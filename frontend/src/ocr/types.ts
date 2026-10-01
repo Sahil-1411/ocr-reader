@@ -63,6 +63,31 @@ export interface InventoryRow {
 }
 
 /**
+ * Why a printed line, or part of one, is not in the rows.
+ *
+ * `note` is text cut out of a line that was kept; every other reason belongs
+ * to a whole line the reader left out. A printed divider has no reason of its
+ * own: a row of dashes is not data, and logging one would only bury the rest.
+ */
+export type SkipReason =
+  | 'note'
+  | 'furniture'
+  | 'repeated-header'
+  | 'summary'
+  | 'unplaced'
+
+/** One line, or one piece of a line, that the reader did not keep. */
+export interface SkippedLine {
+  reason: SkipReason
+  /** What was printed, cells joined left to right in column order. */
+  text: string
+  /** Mean word confidence in [0, 1]. */
+  confidence: number
+  /** Top edge in page pixels, so the log reads in printed order. */
+  y: number
+}
+
+/**
  * A place where the reading contradicts the receipt's own arithmetic.
  *
  * Lives here rather than beside the checks in `receipt/validate.ts` because
@@ -136,6 +161,13 @@ export interface OcrResult {
    * check the page offers passed.
    */
   validation: ValidationIssue[]
+  /**
+   * Lines the reader printed over: page furniture, totals, dividers, and notes
+   * cut out of an item. Logged so a reading can be checked against the page
+   * without guessing what became of the rest of it. Only a column table keeps
+   * this log; the lottery readers leave it empty.
+   */
+  skipped: SkippedLine[]
   processingMeta: ProcessingMeta
 }
 

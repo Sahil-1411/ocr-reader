@@ -342,6 +342,45 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('logs what it left out: notes, totals, and page furniture', () => {
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM', 80, 70, 36),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('8', 30, 110, 8),
+      word('353789', 80, 110, 48),
+      word('ALP', 240, 110, 24),
+      word('NIC', 272, 110, 24),
+      word('POUCH', 304, 110, 40),
+      word('19.50', 484, 110, 40),
+      word('156.00', 572, 110, 48),
+      word('OUT', 240, 132, 24),
+      word('OF', 272, 132, 16),
+      word('STOCK', 296, 132, 40),
+      word('3', 30, 170, 8),
+      word('383612', 80, 170, 48),
+      word('ZYN', 240, 170, 24),
+      word('SPEARMINT', 272, 170, 72),
+      word('19.50', 484, 170, 40),
+      word('58.50', 572, 170, 40),
+      word('TOTAL', 240, 210, 44),
+      word('214.50', 572, 210, 48),
+      word('Page', 40, 260, 36),
+      word('1', 80, 260, 10),
+      word('of', 96, 260, 16),
+      word('2', 116, 260, 10),
+    ])
+    expect(table?.skipped.map(({ reason, text }) => [reason, text])).toEqual([
+      ['note', 'OUT OF STOCK'],
+      ['summary', 'TOTAL  214.50'],
+      ['furniture', 'Page  1 of 2'],
+    ])
+    // The log reads in printed order, and every entry carries its confidence.
+    expect(table?.skipped.every((line) => line.confidence > 0 && line.y > 0)).toBe(true)
+  })
+
   it('joins a token the reader split, and keeps a space the page printed', () => {
     const table = readColumnTable([
       word('QTY', 20, 70, 28),

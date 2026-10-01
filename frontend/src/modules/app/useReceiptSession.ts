@@ -7,6 +7,7 @@ import { textLayerIsUsable } from '../../lib/pdf-text'
 import { OcrCancelledError, OcrClient } from '../../ocr/client'
 import type { ColumnGuide } from '../../ocr/layout/columns'
 import { withCell } from '../../ocr/receipt/assemble'
+import type { PageFailure } from '../../lib/export'
 import { DEFAULT_OPTIONS, type OcrResult, type ProgressEvent } from '../../ocr/types'
 import { NO_EDITS, type PageRead, type Phase, type ReceiptSession } from './types'
 
@@ -324,6 +325,27 @@ export function useReceiptSession(): ReceiptSession {
     [pages],
   )
   const pageError = pageErrors.get(currentPage)
+  /**
+   * Pages the export has no rows for, for the skipped log: one whose read
+   * failed, and one reading never reached.
+   */
+  const failures = useMemo<PageFailure[]>(() => {
+    if (!isPdfMode) return []
+    return pdfPages.flatMap((_, index) =>
+      pages.has(index)
+        ? []
+        : [
+            {
+              page: index + 1,
+              message:
+                pageErrors.get(index) ??
+                (phase === 'running' || phase === 'booting'
+                  ? 'Not read yet.'
+                  : 'Reading stopped before this page.'),
+            },
+          ],
+    )
+  }, [isPdfMode, pdfPages, pages, pageErrors, phase])
   const tablePages = useMemo(
     () =>
       [...pages.entries()]
@@ -352,6 +374,7 @@ export function useReceiptSession(): ReceiptSession {
     busy,
     unread,
     pageError,
+    failures,
     exportPages,
     tablePages,
     onFile,

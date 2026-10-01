@@ -84,6 +84,10 @@ Python stops at word boxes. Rows are built in TypeScript, so the app and
   columns against TOTALS, the settlement count against `Packs Total Settled`, the invoice
   header lines against `TOTAL DUE`. Anything solved or unreadable is listed above the
   table and its row highlighted.
+- **Skipped & Removed** is the second export, kept apart from the data one. It logs every
+  printed line the reading left out — totals, page furniture, a line that belongs to no
+  item, a note such as `OUT OF STOCK` cut out of an item's description — and any page that
+  produced no rows, each with its page, reason and confidence.
 
 ## Where the code lives
 

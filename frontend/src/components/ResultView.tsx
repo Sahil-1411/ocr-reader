@@ -1,6 +1,13 @@
 import { Fragment, useMemo, useState } from 'react'
 
-import { toCsv, toDocumentJson, type ExportPage } from '../lib/export'
+import {
+  toCsv,
+  toDocumentJson,
+  toSkippedCsv,
+  toSkippedLog,
+  type ExportPage,
+  type PageFailure,
+} from '../lib/export'
 import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -462,6 +469,95 @@ function rowConfidences(result: OcrResult): number[] {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Export controls                                                            */
+/* -------------------------------------------------------------------------- */
+
+/** Copy `text`, falling back to a hidden textarea where the clipboard is blocked. */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return
+  } catch {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.style.position = 'fixed'
+    area.style.opacity = '0'
+    document.body.append(area)
+    area.select()
+    document.execCommand('copy')
+    area.remove()
+  }
+}
+
+/** Offer `content` to the browser as a download. */
+function saveFile(content: string, type: string, name: string): void {
+  const blob = new Blob([content], { type })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = name
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+/** The uploaded file's name without its extension, for the downloads. */
+function exportBaseName(fileName: string | null, fallback: string): string {
+  return (fileName ?? '').replace(/\.[^.]+$/, '') || fallback
+}
+
+function DownloadIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  )
+}
+
+/** The copy button, which says so for a moment after it has copied. */
+function CopyButton({ text, label, title, disabled }: {
+  text: string
+  /** What the button copies, for the label it shows at rest. */
+  label: string
+  title?: string
+  disabled?: boolean
+}) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    await copyText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1600)
+  }
+  return (
+    <button
+      type="button"
+      className={`btn btn--sm${copied ? ' btn--copied' : ''}`}
+      onClick={copy}
+      disabled={disabled}
+      title={title ?? label}
+    >
+      {copied ? (
+        <>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Copied!
+        </>
+      ) : (
+        <>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+          Copy
+        </>
+      )}
+    </button>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
 /* JSON & Export View                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -477,7 +573,6 @@ interface JsonViewProps {
 }
 
 export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
-  const [copied, setCopied] = useState(false)
   const [showJson, setShowJson] = useState(false)
 
   const publicData = useMemo(() => toDocumentJson(pages, total), [pages, total])
@@ -494,38 +589,12 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
           ? `All ${total} pages · ${rowCount} rows`
           : `${pages.length} of ${total} pages read · ${rowCount} rows`
   const waiting = reading ? 'Export includes every page once all of them are read' : undefined
-  const baseName = (fileName ?? '').replace(/\.[^.]+$/, '') || `${publicData?.kind ?? 'receipt'}-receipt`
+  const baseName = exportBaseName(fileName, `${publicData?.kind ?? 'receipt'}-receipt`)
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(json)
-    } catch {
-      const area = document.createElement('textarea')
-      area.value = json
-      area.style.position = 'fixed'
-      area.style.opacity = '0'
-      document.body.append(area)
-      area.select()
-      document.execCommand('copy')
-      area.remove()
-    }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
-  }
-
-  const save = (content: string, type: string, extension: string) => {
-    const blob = new Blob([content], { type })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${baseName}.${extension}`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-  }
-
-  const downloadJson = () => save(json, 'application/json', 'json')
+  const downloadJson = () => saveFile(json, 'application/json', `${baseName}.json`)
   // The byte-order mark tells Excel the file is UTF-8, so `CRÈME` stays `CRÈME`.
-  const downloadCsv = () => save(`\uFEFF${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', 'csv')
+  const downloadCsv = () =>
+    saveFile(`\uFEFF${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', `${baseName}.csv`)
 
   return (
     <div className="card export-card">
@@ -548,11 +617,7 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
             disabled={!ready}
             title={waiting ?? 'Download every row as a CSV spreadsheet'}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
+            <DownloadIcon />
             CSV
           </button>
           <button
@@ -562,37 +627,15 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
             disabled={!ready}
             title={waiting ?? 'Download every row as JSON'}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
+            <DownloadIcon />
             JSON
           </button>
-          <button
-            type="button"
-            className={`btn btn--sm${copied ? ' btn--copied' : ''}`}
-            onClick={copy}
-            disabled={!ready}
+          <CopyButton
+            text={json}
+            label="Copy every row as JSON"
             title={waiting ?? 'Copy every row as JSON'}
-          >
-            {copied ? (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-                Copy
-              </>
-            )}
-          </button>
+            disabled={!ready}
+          />
           <button
             type="button"
             className="btn btn--sm btn--ghost"
@@ -606,6 +649,148 @@ export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
       {showJson && (
         <div className="card__body card__body--code">
           <pre className="json-preview">{json}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Skipped & Removed View                                                     */
+/* -------------------------------------------------------------------------- */
+
+interface SkippedViewProps {
+  /** Every page read so far, in page order. */
+  pages: readonly ExportPage[]
+  /** Pages in the document: 1 for an image. */
+  total: number
+  /** Pages that produced no rows: a read that failed, or one never reached. */
+  failures: readonly PageFailure[]
+  /** Still reading pages: the log waits for all of them. */
+  reading: boolean
+  /** The uploaded file's name, for the downloads. */
+  fileName: string | null
+}
+
+/**
+ * What the read left out, kept apart from the data export.
+ *
+ * The export is what the document says; this is the account of everything the
+ * reader printed over to say it — totals, page furniture, notes cut out of a
+ * line, and any page that produced no rows at all.
+ */
+export function SkippedView({ pages, total, failures, reading, fileName }: SkippedViewProps) {
+  const [showLog, setShowLog] = useState(false)
+
+  const log = useMemo(() => toSkippedLog(pages, total, failures), [pages, total, failures])
+  const json = useMemo(() => JSON.stringify(log, null, 2), [log])
+  const count = log.rows.length
+  const failed = log.failedPages?.length ?? 0
+  const ready = !reading && count > 0
+  const scope = reading
+    ? `Reading pages… ${count} so far`
+    : count === 0
+      ? 'Nothing skipped'
+      : failed > 0
+        ? `${count} entries · ${failed} ${failed === 1 ? 'page' : 'pages'} not read`
+        : `${count} ${count === 1 ? 'entry' : 'entries'}`
+  const waiting = reading ? 'The log covers every page once all of them are read' : undefined
+  const empty = count === 0 ? 'Every printed line went into the export' : undefined
+  const baseName = `${exportBaseName(fileName, 'receipt')}-skipped`
+
+  const downloadJson = () => saveFile(json, 'application/json', `${baseName}.json`)
+  // The byte-order mark tells Excel the file is UTF-8, so `CRÈME` stays `CRÈME`.
+  const downloadCsv = () =>
+    saveFile(
+      `﻿${toSkippedCsv(pages, total, failures)}`,
+      'text/csv;charset=utf-8;',
+      `${baseName}.csv`,
+    )
+
+  return (
+    <div className="card export-card">
+      <div className="card__head">
+        <div className="export-title-group">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <line x1="12" y1="8" x2="12" y2="13" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <h2 className="card__title">Skipped &amp; Removed</h2>
+          <span className="count" aria-live="polite">{scope}</span>
+        </div>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={downloadCsv}
+            disabled={!ready}
+            title={waiting ?? empty ?? 'Download the log as a CSV spreadsheet'}
+          >
+            <DownloadIcon />
+            CSV
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={downloadJson}
+            disabled={!ready}
+            title={waiting ?? empty ?? 'Download the log as JSON'}
+          >
+            <DownloadIcon />
+            JSON
+          </button>
+          <CopyButton
+            text={json}
+            label="Copy the log as JSON"
+            title={waiting ?? empty ?? 'Copy the log as JSON'}
+            disabled={!ready}
+          />
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={() => setShowLog(!showLog)}
+            disabled={count === 0}
+            title={empty}
+          >
+            {showLog ? 'Hide Log' : 'View Log'}
+          </button>
+        </div>
+      </div>
+
+      {showLog && count > 0 && (
+        <div className="card__body card__body--compact">
+          <div className="table-responsive">
+            <table className="fields">
+              <thead>
+                <tr>
+                  {total > 1 && <th className="num">Page</th>}
+                  <th className="col--text">Reason</th>
+                  <th className="col--wide">Printed text</th>
+                  <th className="num">Conf.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {log.rows.map((row, index) => (
+                  <tr
+                    key={`${row.page}-${index}`}
+                    className={row.reason === 'page-error' ? 'fields__row--flagged' : undefined}
+                  >
+                    {total > 1 && <td className="num">{row.page}</td>}
+                    <td className="col--text">{row.what}</td>
+                    {/* The printed line can run the width of the page; the cell
+                        shows what fits and the title holds the rest. */}
+                    <td className="col--wide log-text" title={row.text}>
+                      {row.text}
+                    </td>
+                    <td className="num">
+                      {row.confidence === undefined ? '—' : `${Math.round(row.confidence * 100)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

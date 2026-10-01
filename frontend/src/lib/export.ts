@@ -8,7 +8,7 @@
  */
 
 import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
-import type { OcrResult, ReceiptKind } from '../ocr/types'
+import type { OcrResult, ReceiptKind, SkipReason } from '../ocr/types'
 
 /** One read page of the document, numbered from 1. */
 export interface ExportPage {
@@ -164,4 +164,105 @@ function csvLines(lines: readonly (readonly string[])[]): string {
 function escapeCsv(value: string | undefined): string {
   const text = value ?? ''
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
+/* -------------------------------------------------------------------------- */
+/* Skipped & removed                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** A page the reader never produced rows for, and why. */
+export interface PageFailure {
+  page: number
+  /** The error as the reader reported it, or why the page was not reached. */
+  message: string
+}
+
+/** One line, note, or whole page that is not in the data export. */
+export interface SkippedEntry {
+  page: number
+  /** The reader's own reason, for a caller that wants to group the log. */
+  reason: SkipReason | 'page-error'
+  /** What that reason means, in the words the log shows. */
+  what: string
+  /** The printed line, the note that was cut, or the page's error. */
+  text: string
+  /** Mean word confidence in [0, 1]. Absent for a page that was never read. */
+  confidence?: number
+}
+
+export interface SkippedJson {
+  /** Pages in the document. */
+  pages: number
+  /** Entries in the log. */
+  skipped: number
+  /** Pages that produced no rows at all. */
+  failedPages?: number[]
+  rows: SkippedEntry[]
+}
+
+/** What each reason means, in the words the log shows. */
+const SKIP_REASON: Record<SkipReason | 'page-error', string> = {
+  note: 'Note removed from the line',
+  furniture: 'Page header, footer, or banner',
+  'repeated-header': 'Column header printed again',
+  summary: 'Totals or subtotal line',
+  unplaced: 'Line that belongs to no item',
+  'page-error': 'Page produced no rows',
+}
+
+/**
+ * Everything the read left out, in page order: the lines each page's reader
+ * printed over, and the pages that produced nothing at all.
+ *
+ * Kept apart from the data export so the rows a caller imports stay exactly
+ * the rows the document prints, while the account of the rest is still there
+ * to check a reading against the page.
+ */
+export function toSkippedLog(
+  pages: readonly ExportPage[],
+  total: number,
+  failures: readonly PageFailure[] = [],
+): SkippedJson {
+  const rows: SkippedEntry[] = []
+  for (const { page, result } of pages) {
+    for (const line of result.skipped) {
+      rows.push({
+        page,
+        reason: line.reason,
+        what: SKIP_REASON[line.reason],
+        text: line.text,
+        confidence: Math.round(line.confidence * 100) / 100,
+      })
+    }
+  }
+  for (const { page, message } of failures) {
+    rows.push({ page, reason: 'page-error', what: SKIP_REASON['page-error'], text: message })
+  }
+  rows.sort((a, b) => a.page - b.page)
+  const failed = failures.map(({ page }) => page).sort((a, b) => a - b)
+  return {
+    pages: total,
+    skipped: rows.length,
+    ...(failed.length > 0 ? { failedPages: failed } : {}),
+    rows,
+  }
+}
+
+/** The same log as CSV, with a `Page` column however long the document is. */
+export function toSkippedCsv(
+  pages: readonly ExportPage[],
+  total: number,
+  failures: readonly PageFailure[] = [],
+): string {
+  const log = toSkippedLog(pages, total, failures)
+  const lines: string[][] = [['Page', 'Reason', 'Text', 'Confidence']]
+  for (const row of log.rows) {
+    lines.push([
+      String(row.page),
+      row.what,
+      row.text,
+      row.confidence === undefined ? '' : row.confidence.toFixed(2),
+    ])
+  }
+  return csvLines(lines)
 }

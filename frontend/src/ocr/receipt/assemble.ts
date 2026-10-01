@@ -235,6 +235,9 @@ export function assembleReceipt(
     tableRows,
     ...(kind === 'table' && table ? { columnBounds: table.bounds } : {}),
     validation,
+    // Only the column reader keeps a log; a page read some other way has no
+    // account of what it left out.
+    skipped: kind === 'table' && table ? table.skipped : [],
     processingMeta: { ...facts, wordCount: words.length, totalMs: 0, warnings },
   }
 }

@@ -1214,6 +1214,15 @@ button {
   background: var(--bg-sunken);
 }
 
+/* The skipped log prints whole lines; a long one is cut to keep the card narrow. */
+.fields td.log-text {
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 /* Tone Row Highlights */
 .fields__row--low td,
 .fields tbody tr.fields__row--low:hover td {

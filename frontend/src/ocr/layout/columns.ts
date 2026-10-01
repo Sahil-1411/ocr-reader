@@ -7,7 +7,7 @@
  * amount — or as a game-pack code — drops every cell past the second.
  */
 
-import type { TableRow } from '../types'
+import type { SkippedLine, SkipReason, TableRow } from '../types'
 import { groupIntoLines, type WordBox } from './rows'
 
 export interface ColumnTable {
@@ -15,6 +15,8 @@ export interface ColumnTable {
   rows: TableRow[]
   /** Left edge of each column, in the same pixel space as the words. */
   bounds: number[]
+  /** Printed lines the reader left out, and notes it cut, in printed order. */
+  skipped: SkippedLine[]
 }
 
 /** Column edges learned from an earlier page of the same document. */
@@ -84,24 +86,51 @@ export function readColumnTable(
   // however close the page sets its lines.
   const reach = Math.min(lineHeight * 1.5, typicalGap(body, layout.items, lineHeight) + lineHeight * 0.75)
   const rows: TableRow[] = []
+  // Every line the reader prints over, so the reading can be checked against
+  // the page without guessing what became of the rest of it.
+  const skipped: SkippedLine[] = []
+  const log = (reason: SkipReason, cells: readonly string[], confidence: number, y: number) => {
+    const text = cells.map((cell) => cell.trim()).filter((cell) => cell.length > 0).join('  ')
+    if (!text) return
+    skipped.push({ reason, text, confidence, y })
+  }
   let previousBand: { top: number; bottom: number } | null = null
   // A wrapped item name sits just above the numbers. Hold it until that row.
-  let leadIn: { cells: string[]; band: { top: number; bottom: number } } | null = null
+  let leadIn: { cells: string[]; band: { top: number; bottom: number }; confidence: number } | null =
+    null
+  /** A held name no item claimed is lost with the rest of the page furniture. */
+  const dropLeadIn = () => {
+    if (leadIn) log('unplaced', leadIn.cells, leadIn.confidence, leadIn.band.top)
+    leadIn = null
+  }
 
   for (const line of body) {
-    let cells: string[] = withoutStockNote(
+    const read = withoutStockNote(
       bucketsForLine(line, columns, bounds, lineHeight, titled).map(joinWords),
     )
+    let cells: string[] = read.cells
+    const confidence = meanConfidence(line)
+    const top = lineBand(line).top
+    for (const note of read.notes) log('note', [note], confidence, top)
     const item = isLineItem(cells)
     // A product can be called anything; only a line that is not an item can
     // be page furniture.
-    if ((!item && isFurniture(cells)) || isRule(cells) || isRepeatedHeader(cells, columns)) continue
+    if (!item && isFurniture(cells)) {
+      log('furniture', cells, confidence, top)
+      continue
+    }
+    if (isRule(cells)) continue
+    if (isRepeatedHeader(cells, columns)) {
+      log('repeated-header', cells, confidence, top)
+      continue
+    }
     if (!cells.some((cell) => cell.trim())) continue
     // Totals are not items, and nothing below a total is the rest of the item
     // above it.
     if (isSummary(cells, item)) {
+      log('summary', cells, confidence, top)
       previousBand = null
-      leadIn = null
+      dropLeadIn()
       continue
     }
 
@@ -124,9 +153,11 @@ export function readColumnTable(
       // it is not, like any other banner.
       if (isStarred(text)) {
         if (placed === 'text' && text.some((cell) => /[A-Za-z]/.test(cell))) {
-          rows.push({ cells: text, confidence: meanConfidence(line), label: true })
+          rows.push({ cells: text, confidence, label: true })
+        } else {
+          log('unplaced', text, confidence, top)
         }
-        leadIn = null
+        dropLeadIn()
         previousBand = null
         continue
       }
@@ -139,30 +170,40 @@ export function readColumnTable(
       // Appending that to the item's figures would corrupt them, so it is a
       // row of its own.
       if (follows && placed === 'figures') {
-        rows.push({ cells: text, confidence: meanConfidence(line) })
+        rows.push({ cells: text, confidence })
         previousBand = band
         continue
       }
       if (placed === 'text' && isLeadIn(text)) {
         const closeLead: boolean = leadIn !== null && band.top - leadIn.band.bottom <= reach
-        leadIn = closeLead && leadIn
-          ? { cells: combineCells(leadIn.cells, text), band: { top: leadIn.band.top, bottom: band.bottom } }
-          : { cells: text, band }
+        if (closeLead && leadIn) {
+          leadIn = {
+            cells: combineCells(leadIn.cells, text),
+            band: { top: leadIn.band.top, bottom: band.bottom },
+            confidence: Math.min(leadIn.confidence, confidence),
+          }
+        } else {
+          dropLeadIn()
+          leadIn = { cells: text, band, confidence }
+        }
         continue
       }
       // The legal footer, a notes block, a banner: they share the page with
       // the table but they are not part of any item.
-      leadIn = null
+      log('unplaced', text, confidence, top)
+      dropLeadIn()
       continue
     }
     // A heading one blank line above the item is not its name.
     if (leadIn && band.top - leadIn.band.bottom <= reach) {
       cells = combineCells(leadIn.cells, cells)
+      leadIn = null
     }
-    leadIn = null
-    rows.push({ cells, confidence: meanConfidence(line) })
+    dropLeadIn()
+    rows.push({ cells, confidence })
     previousBand = band
   }
+  dropLeadIn()
 
   // One item is enough when the columns are known. The last page of a long
   // invoice often carries a single item above the totals, and refusing it sent
@@ -170,7 +211,8 @@ export function readColumnTable(
   // one cell by nature and say nothing about whether this is a table.
   if (!rows.some((row) => !row.label)) return null
 
-  return { headers: columns.map((column) => column.label), rows, bounds }
+  skipped.sort((a, b) => a.y - b.y)
+  return { headers: columns.map((column) => column.label), rows, bounds, skipped }
 }
 
 function usableGuide(
@@ -1131,14 +1173,17 @@ function isSummary(cells: readonly string[], item: boolean): boolean {
 const STOCK_NOTE = /\bout\s*of\s*stock\b|\bno\s*stock\b/i
 const STOCK_NOTES = new RegExp(STOCK_NOTE.source, 'gi')
 
-/** `cells` without any stock note; the same cells when none is printed. */
-function withoutStockNote(cells: readonly string[]): string[] {
-  if (!cells.some((cell) => STOCK_NOTE.test(cell))) return [...cells]
-  return cells.map((cell) => {
+/** `cells` without any stock note, beside the notes that were cut out of them. */
+function withoutStockNote(cells: readonly string[]): { cells: string[]; notes: string[] } {
+  if (!cells.some((cell) => STOCK_NOTE.test(cell))) return { cells: [...cells], notes: [] }
+  const notes: string[] = []
+  const kept = cells.map((cell) => {
     if (!STOCK_NOTE.test(cell)) return cell
+    notes.push(...(cell.match(STOCK_NOTES) ?? []))
     const cut = cell.replace(STOCK_NOTES, ' ').replace(/\s+/g, ' ').trim()
     return /[A-Za-z0-9]/.test(cut) ? cut : ''
   })
+  return { cells: kept, notes }
 }
 
 function isRule(cells: readonly string[]): boolean {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { toCsv, toDocumentJson, type ExportPage } from './export'
+import { toCsv, toDocumentJson, toSkippedCsv, toSkippedLog, type ExportPage } from './export'
 import { toPublicJson, withCell } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -13,6 +13,7 @@ function table(headers: string[], rows: string[][], extra: Partial<OcrResult> = 
     fields: [],
     tableRows: rows.map((cells) => ({ cells, confidence: 1 })),
     validation: [],
+    skipped: [],
     processingMeta: {
       reader: 'pdf text',
       watermarkSuppressed: false,
@@ -215,6 +216,59 @@ describe('columns that could collide', () => {
       'Page,Game-Pack,Name,Column 3',
       '1,875-010840,STACKED,02/28/26',
       '2,833-129990,CASH,02/27/26',
+    ])
+  })
+})
+
+describe('toSkippedLog', () => {
+  const page = (number: number, skipped: OcrResult['skipped']): ExportPage => ({
+    page: number,
+    result: { ...table(HEADERS, [['1', 'WIDGET', '2.00']]), skipped },
+  })
+
+  it(`gathers every page's skipped lines, and the pages that produced none`, () => {
+    const log = toSkippedLog(
+      [
+        page(1, [
+          { reason: 'note', text: 'OUT OF STOCK', confidence: 0.912, y: 120 },
+          { reason: 'summary', text: 'TOTAL  214.50', confidence: 0.98, y: 400 },
+        ]),
+        page(3, [{ reason: 'furniture', text: 'Page 3 of 3', confidence: 0.8, y: 900 }]),
+      ],
+      3,
+      [{ page: 2, message: 'The reader returned no words.' }],
+    )
+    expect(log.pages).toBe(3)
+    expect(log.skipped).toBe(4)
+    expect(log.failedPages).toEqual([2])
+    expect(log.rows.map(({ page: on, reason, text }) => [on, reason, text])).toEqual([
+      [1, 'note', 'OUT OF STOCK'],
+      [1, 'summary', 'TOTAL  214.50'],
+      [2, 'page-error', 'The reader returned no words.'],
+      [3, 'furniture', 'Page 3 of 3'],
+    ])
+    // Confidence is rounded for the log; a page that was never read has none.
+    expect(log.rows[0]?.confidence).toBe(0.91)
+    expect(log.rows[2]?.confidence).toBeUndefined()
+  })
+
+  it('says nothing was skipped when every line was kept', () => {
+    const log = toSkippedLog([page(1, [])], 1)
+    expect(log.skipped).toBe(0)
+    expect(log.failedPages).toBeUndefined()
+    expect(log.rows).toEqual([])
+  })
+
+  it('writes the log as CSV, quoting a line that carries a comma', () => {
+    const csv = toSkippedCsv(
+      [page(1, [{ reason: 'unplaced', text: 'TERMS: NET 30, THEN 1.5%', confidence: 0.5, y: 10 }])],
+      2,
+      [{ page: 2, message: 'Reading stopped before this page.' }],
+    )
+    expect(csv.split('\r\n')).toEqual([
+      'Page,Reason,Text,Confidence',
+      '1,Line that belongs to no item,"TERMS: NET 30, THEN 1.5%",0.50',
+      '2,Page produced no rows,Reading stopped before this page.,',
     ])
   })
 })

@@ -4,7 +4,7 @@ import type { StageMap } from '../../lib/stage-state'
 import type { PdfPage } from '../../lib/pdf-to-images'
 import type { OcrResult } from '../../ocr/types'
 import type { PageRows } from '../../components/ResultView'
-import type { ExportPage } from '../../lib/export'
+import type { ExportPage, PageFailure } from '../../lib/export'
 
 export type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
 
@@ -54,6 +54,8 @@ export interface ReceiptSession {
   busy: boolean
   unread: number[]
   pageError: string | undefined
+  /** Pages the export has no rows for, with why, for the skipped log. */
+  failures: PageFailure[]
   exportPages: ExportPage[]
   tablePages: PageRows[]
   onFile: (file: File) => Promise<void>

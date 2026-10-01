@@ -1,6 +1,8 @@
 import { Fragment, useMemo, useState } from 'react'
 
-import { toCsv, toDocumentJson, type ExportPage } from '../lib/export'
+import { extraTables, toTableCsv, type ExportPage } from '../lib/export'
+import { exportBaseName, saveFile } from '../lib/download'
+import { DownloadIcon } from './ExportButtons'
 import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -462,152 +464,96 @@ function rowConfidences(result: OcrResult): number[] {
 }
 
 /* -------------------------------------------------------------------------- */
-/* JSON & Export View                                                         */
+/* Tables printed under the main one                                          */
 /* -------------------------------------------------------------------------- */
 
-interface JsonViewProps {
-  /** Every page read so far, in page order, with the user's edits. */
+interface ExtraTablesProps {
+  /** Every page read so far, in page order. */
   pages: readonly ExportPage[]
   /** Pages in the document: 1 for an image. */
   total: number
-  /** Still reading pages: the export waits for all of them. */
-  reading: boolean
   /** The uploaded file's name, for the downloads. */
   fileName: string | null
 }
 
-export function JsonView({ pages, total, reading, fileName }: JsonViewProps) {
-  const [copied, setCopied] = useState(false)
-  const [showJson, setShowJson] = useState(false)
-
-  const publicData = useMemo(() => toDocumentJson(pages, total), [pages, total])
-  const json = useMemo(() => JSON.stringify(publicData, null, 2), [publicData])
-  const rowCount = publicData?.rows.length ?? 0
-  const complete = !reading && pages.length === total
-  const ready = !reading && pages.length > 0
-  const scope =
-    total === 1
-      ? `${rowCount} rows`
-      : reading
-        ? `Reading pages… ${pages.length} of ${total} done`
-        : complete
-          ? `All ${total} pages · ${rowCount} rows`
-          : `${pages.length} of ${total} pages read · ${rowCount} rows`
-  const waiting = reading ? 'Export includes every page once all of them are read' : undefined
-  const baseName = (fileName ?? '').replace(/\.[^.]+$/, '') || `${publicData?.kind ?? 'receipt'}-receipt`
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(json)
-    } catch {
-      const area = document.createElement('textarea')
-      area.value = json
-      area.style.position = 'fixed'
-      area.style.opacity = '0'
-      document.body.append(area)
-      area.select()
-      document.execCommand('copy')
-      area.remove()
-    }
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1600)
-  }
-
-  const save = (content: string, type: string, extension: string) => {
-    const blob = new Blob([content], { type })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${baseName}.${extension}`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(url), 10_000)
-  }
-
-  const downloadJson = () => save(json, 'application/json', 'json')
-  // The byte-order mark tells Excel the file is UTF-8, so `CRÈME` stays `CRÈME`.
-  const downloadCsv = () => save(`\uFEFF${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', 'csv')
+/**
+ * The tables a page prints under its own: an invoice's `Previous Balances`,
+ * a recap of the order by category.
+ *
+ * Each is shown and downloaded as itself. Reading them into the document's
+ * table would file their dates as descriptions and their amounts as
+ * quantities, which is what the reader used to do.
+ */
+export function ExtraTables({ pages, total, fileName }: ExtraTablesProps) {
+  const tables = useMemo(() => extraTables(pages), [pages])
+  if (tables.length === 0) return null
+  const base = exportBaseName(fileName, 'receipt')
 
   return (
-    <div className="card export-card">
-      <div className="card__head">
-        <div className="export-title-group">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="16 16 12 12 8 16" />
-            <line x1="12" y1="12" x2="12" y2="21" />
-            <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3" />
-            <polyline points="16 16 12 12 8 16" />
-          </svg>
-          <h2 className="card__title">Export & Data Output</h2>
-          <span className="count" aria-live="polite">{scope}</span>
+    <>
+      {tables.map((table) => (
+        <div className="card" key={`${table.slug}-${table.headers.join('|')}`}>
+          <div className="card__head">
+            <div className="export-title-group">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <line x1="3" y1="9" x2="21" y2="9" />
+                <line x1="9" y1="9" x2="9" y2="21" />
+              </svg>
+              <h2 className="card__title">{table.title}</h2>
+              <span className="count">
+                {table.rows.length} {table.rows.length === 1 ? 'row' : 'rows'}
+              </span>
+            </div>
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() =>
+                  saveFile(
+                    // The byte-order mark tells Excel the file is UTF-8.
+                    `﻿${toTableCsv(table, total)}`,
+                    'text/csv;charset=utf-8;',
+                    `${base}-${table.slug}.csv`,
+                  )
+                }
+                title={`Download ${table.title} as a CSV spreadsheet`}
+              >
+                <DownloadIcon />
+                CSV
+              </button>
+            </div>
+          </div>
+          <div className="card__body card__body--compact">
+            <div className="table-responsive">
+              <table className="fields">
+                <thead>
+                  <tr>
+                    {total > 1 && <th className="num">Page</th>}
+                    {table.headers.map((header, index) => (
+                      <th key={`${header}-${index}`} className={index === 0 ? 'col--text' : 'num'}>
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.rows.map((row, index) => (
+                    <tr key={index}>
+                      {total > 1 && <td className="num">{row.page}</td>}
+                      {table.headers.map((header, cell) => (
+                        <td key={`${header}-${cell}`} className={cell === 0 ? 'col--text' : 'num'}>
+                          {row.cells[cell] ?? ''}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-        <div className="btn-row">
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={downloadCsv}
-            disabled={!ready}
-            title={waiting ?? 'Download every row as a CSV spreadsheet'}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            CSV
-          </button>
-          <button
-            type="button"
-            className="btn btn--sm"
-            onClick={downloadJson}
-            disabled={!ready}
-            title={waiting ?? 'Download every row as JSON'}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            JSON
-          </button>
-          <button
-            type="button"
-            className={`btn btn--sm${copied ? ' btn--copied' : ''}`}
-            onClick={copy}
-            disabled={!ready}
-            title={waiting ?? 'Copy every row as JSON'}
-          >
-            {copied ? (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                Copied!
-              </>
-            ) : (
-              <>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
-                Copy
-              </>
-            )}
-          </button>
-          <button
-            type="button"
-            className="btn btn--sm btn--ghost"
-            onClick={() => setShowJson(!showJson)}
-          >
-            {showJson ? 'Hide Raw JSON' : 'View Raw JSON'}
-          </button>
-        </div>
-      </div>
-
-      {showJson && (
-        <div className="card__body card__body--code">
-          <pre className="json-preview">{json}</pre>
-        </div>
-      )}
-    </div>
+      ))}
+    </>
   )
 }

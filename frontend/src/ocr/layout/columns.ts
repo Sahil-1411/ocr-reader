@@ -7,7 +7,7 @@
  * amount — or as a game-pack code — drops every cell past the second.
  */
 
-import type { TableRow } from '../types'
+import type { SkippedLine, SkipReason, TableRow } from '../types'
 import { groupIntoLines, type WordBox } from './rows'
 
 export interface ColumnTable {
@@ -15,6 +15,14 @@ export interface ColumnTable {
   rows: TableRow[]
   /** Left edge of each column, in the same pixel space as the words. */
   bounds: number[]
+  /** Printed lines the reader left out, and notes it cut, in printed order. */
+  skipped: SkippedLine[]
+  /**
+   * The heading printed over this table, when it has one of its own:
+   * `Previous Balances` under an invoice's items. The first table on a page
+   * is the page's own and has none.
+   */
+  title?: string
 }
 
 /** Column edges learned from an earlier page of the same document. */
@@ -41,15 +49,28 @@ export function isLotteryHeader(headers: readonly string[]): boolean {
   return inventory || settlements
 }
 
-/**
- * The column table under the printed header, or null when the page does not
- * have one.
- */
+/** The first column table on the page, or null when it has none. */
 export function readColumnTable(
   words: readonly WordBox[],
   overlapRatio = 0.5,
   guide?: ColumnGuide | null,
 ): ColumnTable | null {
+  return readColumnTables(words, overlapRatio, guide)[0] ?? null
+}
+
+/**
+ * Every column table printed on the page, in printed order.
+ *
+ * A page is not one table by nature: an invoice prints its items, and under
+ * them the customer's previous balances under titles of their own. Reading
+ * the second under the first's columns files its dates as descriptions and
+ * its amounts as quantities, so each printed header gets its own table.
+ */
+export function readColumnTables(
+  words: readonly WordBox[],
+  overlapRatio = 0.5,
+  guide?: ColumnGuide | null,
+): ColumnTable[] {
   const usable = words.filter(
     (word) =>
       word.text.trim().length > 0 &&
@@ -58,48 +79,88 @@ export function readColumnTable(
       // A box that is not on the page cannot sit under a title.
       Number.isFinite(word.x + word.y + word.width + word.height),
   )
-  if (usable.length < 4) return null
+  if (usable.length < 4) return []
 
   const lines = groupIntoLines(usable, overlapRatio)
   const header = findHeader(usable)
   const guided = header ? null : usableGuide(guide)
-  if (!header && !guided) return null
+  if (!header && !guided) return []
 
-  const columns = header?.columns ?? guided?.columns ?? []
-  if (columns.length < 3) return null
-  // A guide's columns are edges an earlier page learned, not titles printed on
-  // this one. Their extents are made up, so nothing is placed by them.
-  const titled = header !== null
-  const headerWords = new Set(header?.words ?? [])
+  const lineHeight = median(usable.map((word) => word.height)) || 12
+
+  /**
+   * The table under one set of column titles: every line below them, placed
+   * by their edges.
+   *
+   * `below` is where those titles end, so a second header further down the
+   * page reads only what is printed under itself.
+   */
+  function readUnder(
+    columns: readonly HeaderColumn[],
+    titleWords: readonly WordBox[],
+    below: number,
+    titled: boolean,
+    until = Infinity,
+  ): ColumnTable {
+  const headerWords = new Set(titleWords)
   const body = lines.filter(
     (line) =>
       !line.some((word) => headerWords.has(word)) &&
-      !(header && lineBand(line).top < header.bottom - 2),
+      lineBand(line).top >= below - 2 &&
+      lineBand(line).top < until,
   )
-  const lineHeight = median(usable.map((word) => word.height)) || 12
-  const printed = header ? columnBounds(header.columns) : (guided?.bounds ?? [])
+  const printed = titled ? columnBounds(columns) : (guided?.bounds ?? [])
   const layout = learnLayout(body, columns, printed, lineHeight, titled)
   const bounds = layout.bounds
   // One printed line below the last, and no further: a blank line ends an item
   // however close the page sets its lines.
   const reach = Math.min(lineHeight * 1.5, typicalGap(body, layout.items, lineHeight) + lineHeight * 0.75)
   const rows: TableRow[] = []
+  // Every line the reader prints over, so the reading can be checked against
+  // the page without guessing what became of the rest of it.
+  const skipped: SkippedLine[] = []
+  const log = (reason: SkipReason, cells: readonly string[], confidence: number, y: number) => {
+    const text = cells.map((cell) => cell.trim()).filter((cell) => cell.length > 0).join('  ')
+    if (!text) return
+    skipped.push({ reason, text, confidence, y })
+  }
   let previousBand: { top: number; bottom: number } | null = null
   // A wrapped item name sits just above the numbers. Hold it until that row.
-  let leadIn: { cells: string[]; band: { top: number; bottom: number } } | null = null
+  let leadIn: { cells: string[]; band: { top: number; bottom: number }; confidence: number } | null =
+    null
+  /** A held name no item claimed is lost with the rest of the page furniture. */
+  const dropLeadIn = () => {
+    if (leadIn) log('unplaced', leadIn.cells, leadIn.confidence, leadIn.band.top)
+    leadIn = null
+  }
 
   for (const line of body) {
-    let cells: string[] = bucketsForLine(line, columns, bounds, lineHeight, titled).map(joinWords)
+    const read = withoutStockNote(
+      bucketsForLine(line, columns, bounds, lineHeight, titled).map(joinWords),
+    )
+    let cells: string[] = read.cells
+    const confidence = meanConfidence(line)
+    const top = lineBand(line).top
+    for (const note of read.notes) log('note', [note], confidence, top)
     const item = isLineItem(cells)
     // A product can be called anything; only a line that is not an item can
     // be page furniture.
-    if ((!item && isFurniture(cells)) || isRule(cells) || isRepeatedHeader(cells, columns)) continue
+    if (!item && isFurniture(cells)) {
+      log('furniture', cells, confidence, top)
+      continue
+    }
+    if (isRule(cells)) continue
+    if (isRepeatedHeader(cells, columns)) {
+      log('repeated-header', cells, confidence, top)
+      continue
+    }
     if (!cells.some((cell) => cell.trim())) continue
     // Totals are not items, and nothing below a total is the rest of the item
     // above it.
     if (isSummary(cells, item)) {
+      log('summary', cells, confidence, top)
       previousBand = null
-      leadIn = null
+      dropLeadIn()
       continue
     }
 
@@ -122,9 +183,11 @@ export function readColumnTable(
       // it is not, like any other banner.
       if (isStarred(text)) {
         if (placed === 'text' && text.some((cell) => /[A-Za-z]/.test(cell))) {
-          rows.push({ cells: text, confidence: meanConfidence(line), label: true })
+          rows.push({ cells: text, confidence, label: true })
+        } else {
+          log('unplaced', text, confidence, top)
         }
-        leadIn = null
+        dropLeadIn()
         previousBand = null
         continue
       }
@@ -137,38 +200,150 @@ export function readColumnTable(
       // Appending that to the item's figures would corrupt them, so it is a
       // row of its own.
       if (follows && placed === 'figures') {
-        rows.push({ cells: text, confidence: meanConfidence(line) })
+        rows.push({ cells: text, confidence })
         previousBand = band
         continue
       }
       if (placed === 'text' && isLeadIn(text)) {
         const closeLead: boolean = leadIn !== null && band.top - leadIn.band.bottom <= reach
-        leadIn = closeLead && leadIn
-          ? { cells: combineCells(leadIn.cells, text), band: { top: leadIn.band.top, bottom: band.bottom } }
-          : { cells: text, band }
+        if (closeLead && leadIn) {
+          leadIn = {
+            cells: combineCells(leadIn.cells, text),
+            band: { top: leadIn.band.top, bottom: band.bottom },
+            confidence: Math.min(leadIn.confidence, confidence),
+          }
+        } else {
+          dropLeadIn()
+          leadIn = { cells: text, band, confidence }
+        }
         continue
       }
       // The legal footer, a notes block, a banner: they share the page with
       // the table but they are not part of any item.
-      leadIn = null
+      log('unplaced', text, confidence, top)
+      dropLeadIn()
       continue
     }
     // A heading one blank line above the item is not its name.
     if (leadIn && band.top - leadIn.band.bottom <= reach) {
       cells = combineCells(leadIn.cells, cells)
+      leadIn = null
     }
-    leadIn = null
-    rows.push({ cells, confidence: meanConfidence(line) })
+    dropLeadIn()
+    rows.push({ cells, confidence })
     previousBand = band
+  }
+  dropLeadIn()
+
+  skipped.sort((a, b) => a.y - b.y)
+    return { headers: columns.map((column) => column.label), rows, bounds, skipped }
   }
 
   // One item is enough when the columns are known. The last page of a long
   // invoice often carries a single item above the totals, and refusing it sent
   // that page to the label-and-amount reader. Labels do not count: they fill
   // one cell by nature and say nothing about whether this is a table.
-  if (!rows.some((row) => !row.label)) return null
+  const priced = (table: ColumnTable) => table.rows.some((row) => !row.label)
 
-  return { headers: columns.map((column) => column.label), rows, bounds }
+  if (!header) {
+    const columns = guided?.columns ?? []
+    if (columns.length < 3) return []
+    // A guide's columns are edges an earlier page learned, not titles printed
+    // on this one. Their extents are made up, so nothing is placed by them.
+    const table = readUnder(columns, [], -Infinity, false)
+    return priced(table) ? [table] : []
+  }
+
+  if (header.columns.length < 3) return []
+
+  // A page can print more than one table: an invoice's items, and under them
+  // the customer's previous balances with titles of their own. Each one's body
+  // is what is printed between its titles and the next table's.
+  const headers = [header]
+  for (let found = header; headers.length < 8; ) {
+    const next = findHeader(usable.filter((word) => word.y > found.bottom + lineHeight * 0.5))
+    if (!next || next.columns.length < 3 || next.top <= found.top) break
+    headers.push(next)
+    found = next
+  }
+
+  const tables = headers.map((printed, index) => {
+    const table = readUnder(
+      printed.columns,
+      printed.words,
+      printed.bottom,
+      true,
+      headers[index + 1]?.top ?? Infinity,
+    )
+    const title = index === 0 ? undefined : titleAbove(printed.top, lines, lineHeight)
+    return title ? { ...table, title } : table
+  })
+
+  // Titles with nothing priced under them are not a table of their own. What
+  // they cover still happened on the page, so it goes to the log — the titles
+  // included — rather than falling out of the reading altogether.
+  const kept: ColumnTable[] = []
+  const orphaned: SkippedLine[] = []
+  tables.forEach((table, index) => {
+    if (index === 0 || priced(table)) {
+      kept.push(table)
+      return
+    }
+    const printed = headers[index]!
+    orphaned.push(
+      {
+        reason: 'unplaced',
+        text: printed.columns.map((column) => column.label).join('  '),
+        confidence: meanConfidence(printed.words),
+        y: printed.top,
+      },
+      ...table.rows.map((row) => ({
+        reason: 'unplaced' as const,
+        text: row.cells.filter((cell) => cell.trim()).join('  '),
+        confidence: row.confidence,
+        y: printed.top,
+      })),
+      ...table.skipped,
+    )
+  })
+
+  const [first] = kept
+  if (!first) return []
+  // The page's first table carries the page's log. (One table with nothing
+  // priced under it is a page of this table that holds no items — an empty
+  // table says so, where nothing would hand the page to a reader that invents
+  // rows out of the letterhead.)
+  if (orphaned.length > 0) {
+    kept[0] = { ...first, skipped: [...first.skipped, ...orphaned].sort((a, b) => a.y - b.y) }
+  }
+  return kept
+}
+
+/**
+ * The heading a table is printed under: `Previous Balances` over the dates
+ * and amounts, centred on a line of its own.
+ *
+ * A heading names the table in a few words and carries no figure — a row of
+ * the table above, or that table's totals line, is neither.
+ */
+function titleAbove(
+  top: number,
+  lines: readonly (readonly WordBox[])[],
+  lineHeight: number,
+): string | undefined {
+  let best: string | undefined
+  for (const line of lines) {
+    const band = lineBand(line)
+    if (band.bottom > top - 1 || band.bottom < top - lineHeight * 3) continue
+    const text = line
+      .map((word) => word.text.trim())
+      .filter((word) => word.length > 0)
+      .join(' ')
+    if (!/[A-Za-z]/.test(text) || text.split(/\s+/).length > 5) continue
+    if (/\d[.,]\d{2}|[$€£]/.test(text)) continue
+    best = text
+  }
+  return best
 }
 
 function usableGuide(
@@ -185,7 +360,7 @@ function usableGuide(
 }
 
 const HEADER_WORD =
-  /^(?:qty|quantity|case|unt|unit|item#?|items?|part#?|upc|sku|description|pack|prc|price|extended|amount|total|ordered|shipped|customer|tax|per|oos|qos|sub-?)$/i
+  /^(?:qty|quantity|case|unt|unit|item#?|items?|part#?|upc|sku|description|pack|prc|price|extended|amount|total|ordered|shipped|customer|tax|per|oos|qos|sub-?|code|date|dated|invoice#?|balance|charge|credit|debit|category|lines?|units?|cost)$/i
 
 /**
  * The printed column titles, including a header stacked on two baselines
@@ -198,7 +373,7 @@ const HEADER_WORD =
  */
 function findHeader(
   words: readonly WordBox[],
-): { columns: HeaderColumn[]; words: WordBox[]; bottom: number } | null {
+): { columns: HeaderColumn[]; words: WordBox[]; top: number; bottom: number } | null {
   const hits = words.filter((word) => HEADER_WORD.test(word.text.trim()) || /upc|part#|description/i.test(word.text))
   if (hits.length < 3) return null
 
@@ -240,7 +415,7 @@ function findHeader(
   const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
   const score = scoreHeader(columns, nextLine, 4)
   if (score < 28) return null
-  return { columns, words: headerWords, bottom }
+  return { columns, words: headerWords, top: Math.min(...headerWords.map((word) => word.y)), bottom }
 }
 
 /**
@@ -557,14 +732,29 @@ function learnLayout(
   // Item rows are recognisable under rough edges: a quantity and a price
   // survive a boundary in the wrong place, only the text between them moves.
   // A totals line has that shape too, and is not an item.
-  const items = body.filter((line) => {
-    const cells = bucketsForLine(line, columns, printed, lineHeight, titled).map(joinWords)
-    return isLineItem(cells) && !isSummary(cells, true)
-  })
+  const itemsUnder = (edges: readonly number[]) =>
+    body.filter((line) => {
+      const cells = bucketsForLine(line, columns, edges, lineHeight, titled).map(joinWords)
+      return isLineItem(cells) && !isSummary(cells, true)
+    })
+  let anchors = printed
+  let items = itemsUnder(anchors)
+  // A title's own edges assume its values follow it. A table that sets them
+  // right of their titles instead — `Invoice` over numbers a hand's width
+  // further on — puts two columns in one cell, and then no row reads as a
+  // row. The body's own gutters say where the columns are in that case.
+  if (items.length === 0 && titled) {
+    const guessed = gutterBounds(body, columns, printed, lineHeight)
+    const retry = itemsUnder(guessed)
+    if (retry.length > 0) {
+      anchors = guessed
+      items = retry
+    }
+  }
   const charWidth = characterWidth(items.flat()) || lineHeight * 0.5
-  if (items.length === 0) return { bounds: [...printed], profiles: [], charWidth, items: new Set() }
+  if (items.length === 0) return { bounds: [...anchors], profiles: [], charWidth, items: new Set() }
 
-  const bounds = titled ? refineBounds(printed, columns, items, charWidth, lineHeight) : [...printed]
+  const bounds = titled ? refineBounds(anchors, columns, items, charWidth, lineHeight) : [...anchors]
   const filled: WordBox[][][] = columns.map(() => [])
   for (const line of items) {
     bucketsForLine(line, columns, bounds, lineHeight, titled).forEach((bucket, index) => {
@@ -687,6 +877,39 @@ function typicalGap(
  * that, one row in ten may intrude, and on a page of three items or more one
  * row; failing that too, the printed edge stands.
  */
+/**
+ * Column edges taken from the body's own ink: the widest clear gutter between
+ * one title and the next.
+ *
+ * The titles still say which column is which and roughly where; this only
+ * says where one ends and the next begins, for a table that sets its values
+ * somewhere other than under its titles.
+ */
+function gutterBounds(
+  body: readonly WordBox[][],
+  columns: readonly HeaderColumn[],
+  printed: readonly number[],
+  lineHeight: number,
+): number[] {
+  const inked = union(body.flat().map((word) => [word.x, word.x + word.width] as const))
+  const bounds = [...printed]
+  for (let index = 1; index < columns.length; index += 1) {
+    const from = columns[index - 1]?.x ?? -Infinity
+    const to = columns[index]?.right ?? Infinity
+    let widest: { start: number; end: number } | null = null
+    for (let gap = 1; gap < inked.length; gap += 1) {
+      const start = Math.max(inked[gap - 1]![1], from)
+      const end = Math.min(inked[gap]![0], to)
+      if (end <= start) continue
+      if (!widest || end - start > widest.end - widest.start) widest = { start, end }
+    }
+    if (widest && widest.end - widest.start >= lineHeight * 0.5) {
+      bounds[index] = (widest.start + widest.end) / 2
+    }
+  }
+  return bounds
+}
+
 function refineBounds(
   printed: readonly number[],
   columns: readonly HeaderColumn[],
@@ -703,6 +926,9 @@ function refineBounds(
       )
       if (hits.length === 1) owned[hits[0]!]!.push(field)
       else if (hits.length === 0) strays.push(field)
+      else {
+        for (const [index, part] of partsAcrossTitles(field, columns)) owned[index]!.push(part)
+      }
     }
   }
   const titleBefore = (field: readonly WordBox[]) => {
@@ -961,6 +1187,62 @@ function characterWidth(words: readonly WordBox[]): number {
   )
 }
 
+/**
+ * A field set across two titles, cut at its widest gap when each half is one
+ * column's own.
+ *
+ * `5CT  04254418` is a size and a UPC, printed a space and a bit apart, which
+ * makes them one field. Dropping it loses the only evidence of where the UPC
+ * column begins — and a UPC four digits shorter than its neighbours' is then
+ * read as part of the size. Both halves must each sit under one title, and a
+ * different one, so a name running past its own column into open space is not
+ * cut: its tail sits under no title at all.
+ */
+function partsAcrossTitles(
+  field: readonly WordBox[],
+  columns: readonly HeaderColumn[],
+): Array<[index: number, part: WordBox[]]> {
+  if (field.length < 2) return []
+  let at = -1
+  let widest = 0
+  for (let index = 1; index < field.length; index += 1) {
+    const previous = field[index - 1]!
+    const gap = field[index]!.x - (previous.x + previous.width)
+    if (gap > widest) {
+      widest = gap
+      at = index
+    }
+  }
+  if (at < 0 || widest <= 0) return []
+  const found: Array<[number, WordBox[]]> = []
+  for (const half of [field.slice(0, at), field.slice(at)]) {
+    const index = titleOf(half, columns)
+    if (index < 0) return []
+    found.push([index, half])
+  }
+  return found[0]![0] === found[1]![0] ? [] : found
+}
+
+/**
+ * The one title `part` is set under, or -1.
+ *
+ * Measured against the narrower of the two, as a title is matched anywhere
+ * else in this file: a short code covers all of its own width under a wide
+ * title, and a name that merely reaches the next title covers little of it.
+ * That is the difference between a value of that column and a value running
+ * past its own.
+ */
+function titleOf(part: readonly WordBox[], columns: readonly HeaderColumn[]): number {
+  const x = Math.min(...part.map((word) => word.x))
+  const right = Math.max(...part.map((word) => word.x + word.width))
+  const hits = columns.flatMap((column, index) => {
+    const overlap = Math.min(right, column.right) - Math.max(x, column.x)
+    const narrower = Math.min(right - x, column.right - column.x)
+    return overlap > 0 && overlap >= narrower * 0.5 ? [index] : []
+  })
+  return hits.length === 1 ? hits[0]! : -1
+}
+
 function horizontalOverlap(field: readonly WordBox[], column: HeaderColumn): number {
   const x = Math.min(...field.map((word) => word.x))
   const right = Math.max(...field.map((word) => word.x + word.width))
@@ -1113,6 +1395,33 @@ function isSummary(cells: readonly string[], item: boolean): boolean {
   const amounts = cells.filter((cell) => /\d\.\d{2}/.test(cell) && !/[A-Za-z]{2,}/.test(cell)).length
   const coded = cells.some((cell) => /^[A-Za-z0-9-]{4,24}$/.test(cell.trim()) && /\d/.test(cell))
   return words.length <= 3 && amounts === 1 && !coded
+}
+
+/**
+ * `OUT OF STOCK` and `NO STOCK`, which the invoice prints under an item, or
+ * beside it, as a note on the order. The words say nothing about what the
+ * product is, so they are cut out before the line is placed: on its own line
+ * the note then has no cells left and is dropped like any blank line, and on
+ * an item's own line the description keeps only the item's name.
+ *
+ * The reader can set the phrase with or without its spaces, and a note is
+ * often starred — `***OUT OF STOCK***` — so a cell left with nothing but
+ * decoration is emptied too.
+ */
+const STOCK_NOTE = /\bout\s*of\s*stock\b|\bno\s*stock\b/i
+const STOCK_NOTES = new RegExp(STOCK_NOTE.source, 'gi')
+
+/** `cells` without any stock note, beside the notes that were cut out of them. */
+function withoutStockNote(cells: readonly string[]): { cells: string[]; notes: string[] } {
+  if (!cells.some((cell) => STOCK_NOTE.test(cell))) return { cells: [...cells], notes: [] }
+  const notes: string[] = []
+  const kept = cells.map((cell) => {
+    if (!STOCK_NOTE.test(cell)) return cell
+    notes.push(...(cell.match(STOCK_NOTES) ?? []))
+    const cut = cell.replace(STOCK_NOTES, ' ').replace(/\s+/g, ' ').trim()
+    return /[A-Za-z0-9]/.test(cut) ? cut : ''
+  })
+  return { cells: kept, notes }
 }
 
 function isRule(cells: readonly string[]): boolean {

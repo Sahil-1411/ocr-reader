@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { assembleReceipt, toPublicJson } from '../receipt/assemble'
-import { isLotteryHeader, readColumnTable } from './columns'
+import { assembleReceipt, rowCells, toPublicJson } from '../receipt/assemble'
+import { isLotteryHeader, readColumnTable, readColumnTables } from './columns'
 import type { WordBox } from './rows'
 
 function word(text: string, x: number, y: number, width = Math.max(12, text.length * 8)): WordBox {
@@ -307,6 +307,80 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('drops an out-of-stock note instead of gluing it to the description', () => {
+    // The invoice prints the note under the item it belongs to, where a
+    // wrapped name would sit, so it used to end up as the tail of the
+    // description. Starred or not, the words are an order note, not a name.
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM', 80, 70, 36),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('8', 30, 110, 8),
+      word('353789', 80, 110, 48),
+      word('ALP', 240, 110, 24),
+      word('NIC', 272, 110, 24),
+      word('POUCH', 304, 110, 40),
+      word('19.50', 484, 110, 40),
+      word('156.00', 572, 110, 48),
+      word('OUT', 240, 132, 24),
+      word('OF', 272, 132, 16),
+      word('STOCK', 296, 132, 40),
+      word('3', 30, 170, 8),
+      word('383612', 80, 170, 48),
+      word('ZYN', 240, 170, 24),
+      word('SPEARMINT', 272, 170, 72),
+      word('19.50', 484, 170, 40),
+      word('58.50', 572, 170, 40),
+      word('***NO', 240, 192, 40),
+      word('STOCK***', 288, 192, 64),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['8', '353789', 'ALP NIC POUCH', '19.50', '156.00'],
+      ['3', '383612', 'ZYN SPEARMINT', '19.50', '58.50'],
+    ])
+  })
+
+  it('logs what it left out: notes, totals, and page furniture', () => {
+    const table = readColumnTable([
+      word('QTY', 20, 70, 28),
+      word('ITEM', 80, 70, 36),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      word('8', 30, 110, 8),
+      word('353789', 80, 110, 48),
+      word('ALP', 240, 110, 24),
+      word('NIC', 272, 110, 24),
+      word('POUCH', 304, 110, 40),
+      word('19.50', 484, 110, 40),
+      word('156.00', 572, 110, 48),
+      word('OUT', 240, 132, 24),
+      word('OF', 272, 132, 16),
+      word('STOCK', 296, 132, 40),
+      word('3', 30, 170, 8),
+      word('383612', 80, 170, 48),
+      word('ZYN', 240, 170, 24),
+      word('SPEARMINT', 272, 170, 72),
+      word('19.50', 484, 170, 40),
+      word('58.50', 572, 170, 40),
+      word('TOTAL', 240, 210, 44),
+      word('214.50', 572, 210, 48),
+      word('Page', 40, 260, 36),
+      word('1', 80, 260, 10),
+      word('of', 96, 260, 16),
+      word('2', 116, 260, 10),
+    ])
+    expect(table?.skipped.map(({ reason, text }) => [reason, text])).toEqual([
+      ['note', 'OUT OF STOCK'],
+      ['summary', 'TOTAL  214.50'],
+      ['furniture', 'Page  1 of 2'],
+    ])
+    // The log reads in printed order, and every entry carries its confidence.
+    expect(table?.skipped.every((line) => line.confidence > 0 && line.y > 0)).toBe(true)
+  })
+
   it('joins a token the reader split, and keeps a space the page printed', () => {
     const table = readColumnTable([
       word('QTY', 20, 70, 28),
@@ -370,6 +444,97 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('reads a table printed under the invoice as a table of its own', () => {
+    // The invoice prints its items, and under them `Previous Balances` with
+    // titles of its own. Read under the invoice's columns, its dates became
+    // descriptions and its balances quantities; it is its own table.
+    const box = wholesaleBox
+    const tables = readColumnTables([
+      box('No', 49, 350, 31),
+      box('Code', 135, 350, 56),
+      box('Description', 497, 350, 123),
+      box('Price', 1100, 350, 56),
+      box('Quantity', 1430, 350, 101),
+      box('Total', 1700, 350, 60),
+      box('1', 55, 400, 14),
+      box('12262', 135, 400, 76),
+      box('4 SEASONS MOTOR OIL', 497, 400, 300),
+      box('$17.95', 1100, 400, 76),
+      box('3', 1480, 400, 14),
+      box('$53.85', 1700, 400, 76),
+      // Its own heading, then titles with the figures set well right of them.
+      box('Previous', 711, 600, 135),
+      box('Balances', 853, 600, 135),
+      box('Date', 318, 660, 54),
+      box('Invoice', 825, 660, 87),
+      box('Balance', 1325, 660, 96),
+      box('08/06/2026', 293, 710, 104),
+      box('93354', 1041, 710, 58),
+      box('$52.65', 1561, 710, 64),
+      box('08/13/2026', 293, 750, 104),
+      box('93363', 1041, 750, 58),
+      box('$35.90', 1561, 750, 64),
+    ])
+
+    expect(tables.map((table) => [table.title, table.headers])).toEqual([
+      [undefined, ['No', 'Code', 'Description', 'Price', 'Quantity', 'Total']],
+      ['Previous Balances', ['Date', 'Invoice', 'Balance']],
+    ])
+    expect(tables[0]?.rows.map((row) => row.cells)).toEqual([
+      ['1', '12262', '4 SEASONS MOTOR OIL', '$17.95', '3', '$53.85'],
+    ])
+    expect(tables[1]?.rows.map((row) => row.cells)).toEqual([
+      ['08/06/2026', '93354', '$52.65'],
+      ['08/13/2026', '93363', '$35.90'],
+    ])
+  })
+
+  it('keeps a short UPC in its own column, not on the end of the size', () => {
+    // Printed as on the wholesale invoice: the size and the UPC are a space
+    // and a bit apart, which makes them one field, and the UPC starts well
+    // left of its own title. A UPC four digits shorter than its neighbours'
+    // has its centre left of the title, and used to be read as part of the
+    // size — `5CT 04254418`, with the UPC column left empty.
+    const box = wholesaleBox
+    const table = readColumnTable([
+      box('ITEM', 66, 621, 100),
+      box('QTY', 251, 621, 40),
+      box('DESCRIPTION', 409, 621, 146),
+      box('SIZE/FM', 952, 621, 93),
+      box('UPC', 1157, 621, 40),
+      box('RETAIL', 1377, 621, 80),
+      box('EXTENSION', 2031, 621, 120),
+      // A twelve-digit UPC: its centre falls right of the title.
+      box('182352', 66, 700, 115),
+      box('18', 259, 700, 37),
+      box('COPENHAGEN', 336, 700, 191),
+      box('5CT', 990, 700, 56),
+      box('073100025891', 1067, 700, 230),
+      box('6.99', 1394, 700, 76),
+      box('513.90', 2048, 700, 114),
+      // An eight-digit UPC, printed from the same left edge.
+      box('155986', 66, 740, 115),
+      box('18', 259, 740, 37),
+      box('GRIZZLY', 336, 740, 133),
+      box('5CT', 990, 740, 56),
+      box('04254418', 1067, 740, 153),
+      box('6.85', 1394, 740, 76),
+      box('502.20', 2048, 740, 114),
+      box('18615', 86, 780, 95),
+      box('36', 259, 780, 37),
+      box('KODIAK', 336, 780, 114),
+      box('5CT', 990, 780, 56),
+      box('04223418', 1067, 780, 153),
+      box('8.35', 1394, 780, 76),
+      box('1229.76', 2028, 780, 134),
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['182352', '18', 'COPENHAGEN', '5CT', '073100025891', '6.99', '513.90'],
+      ['155986', '18', 'GRIZZLY', '5CT', '04254418', '6.85', '502.20'],
+      ['18615', '36', 'KODIAK', '5CT', '04223418', '8.35', '1229.76'],
+    ])
+  })
+
   it('keeps figures under titles set at the left of their columns', () => {
     // `Price` and `Amount` start their columns; the figures end them, clear of
     // every title. The edges the titles suggest put both figures under Amount.
@@ -425,6 +590,70 @@ describe('assembleReceipt column tables', () => {
       DESCRIPTION: 'WIDGET NAME CONTINUED',
       EXTENDED: '48.00',
     })
+  })
+
+  it('keeps a last page that prints only a category recap out of the label reader', () => {
+    // The last page of a wholesale invoice repeats the column titles over a
+    // recap of the order by category — no items at all. Refusing the page sent
+    // it to the label-and-amount reader, which paired the letterhead with
+    // whatever figure was nearest: `TEL 419 248-3393 … 12285.73`.
+    const page = [
+      // Letterhead, above the printed column titles.
+      word('TEL', 40, 20, 30),
+      word('419', 76, 20, 28),
+      word('248-3393', 110, 20, 70),
+      word('12285.73', 520, 20, 64),
+      // The invoice's own column titles.
+      word('ITEM', 80, 70, 36),
+      word('QTY', 160, 70, 28),
+      word('DESCRIPTION', 240, 70, 100),
+      word('PRICE', 480, 70, 44),
+      word('AMOUNT', 560, 70, 56),
+      // A recap of the order by category, under titles of its own.
+      word('CATEGORY', 80, 120, 70),
+      word('DESCRIPTION', 160, 120, 100),
+      word('LINES', 290, 120, 44),
+      word('UNITS', 340, 120, 44),
+      word('YOUR', 520, 120, 36),
+      word('COST', 560, 120, 36),
+      word('JUUL', 80, 150, 36),
+      word('4', 300, 150, 8),
+      word('42', 345, 150, 16),
+      word('2,564.28', 540, 150, 64),
+      word('SNUS', 80, 175, 36),
+      word('24', 296, 175, 16),
+      word('274', 342, 175, 24),
+      word('5,460.00', 540, 175, 64),
+      word('INVOICE', 80, 210, 60),
+      word('TOTAL:', 145, 210, 50),
+      word('13,134.09', 530, 210, 72),
+    ]
+
+    // A page of this table that carries no items, not a page without a table.
+    const table = readColumnTable(page)
+    expect(table?.headers[0]).toBe('ITEM')
+    expect(table?.rows).toEqual([])
+
+    const result = assembleReceipt(
+      page,
+      {
+        reader: 'pdf text',
+        watermarkSuppressed: false,
+        watermarkPixelRatio: 0,
+        sourceSize: { width: 700, height: 300 },
+        timingsMs: {},
+      },
+      0.5,
+    )
+    expect(result.kind).toBe('table')
+    expect(rowCells(result)).toEqual([])
+    // Nothing is lost quietly: the recap is in the log, with the total named.
+    expect(result.skipped.map(({ reason, text }) => [reason, text])).toEqual([
+      ['unplaced', 'CATEGORY  DESCRIPTION  LINES UNITS  YOUR COST'],
+      ['unplaced', 'JUUL  4 42  2,564.28'],
+      ['unplaced', 'SNUS  24 274  5,460.00'],
+      ['summary', 'INVOICE  TOTAL:  13,134.09'],
+    ])
   })
 
   it('still reads a pack settlement as settlements', () => {

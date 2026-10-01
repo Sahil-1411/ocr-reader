@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { toCsv, toDocumentJson, type ExportPage } from './export'
+import {
+  extraTables,
+  toCsv,
+  toDocumentJson,
+  toSkippedCsv,
+  toSkippedLog,
+  toTableCsv,
+  type ExportPage,
+} from './export'
 import { toPublicJson, withCell } from '../ocr/receipt/assemble'
 import type { OcrResult } from '../ocr/types'
 
@@ -12,7 +20,9 @@ function table(headers: string[], rows: string[][], extra: Partial<OcrResult> = 
     settlements: [],
     fields: [],
     tableRows: rows.map((cells) => ({ cells, confidence: 1 })),
+    tables: [{ headers, rows: rows.map((cells) => ({ cells, confidence: 1 })) }],
     validation: [],
+    skipped: [],
     processingMeta: {
       reader: 'pdf text',
       watermarkSuppressed: false,
@@ -215,6 +225,115 @@ describe('columns that could collide', () => {
       'Page,Game-Pack,Name,Column 3',
       '1,875-010840,STACKED,02/28/26',
       '2,833-129990,CASH,02/27/26',
+    ])
+  })
+})
+
+describe('extraTables', () => {
+  const withExtra = (page: number, rows: string[][]): ExportPage => ({
+    page,
+    result: {
+      ...table(HEADERS, [['1', 'WIDGET', '2.00']]),
+      tables: [
+        { headers: HEADERS, rows: [{ cells: ['1', 'WIDGET', '2.00'], confidence: 1 }] },
+        {
+          title: 'Previous Balances',
+          headers: ['Date', 'Invoice', 'Balance'],
+          rows: rows.map((cells) => ({ cells, confidence: 1 })),
+        },
+      ],
+    },
+  })
+
+  it('gathers the same table across pages, and names its download', () => {
+    const tables = extraTables([
+      withExtra(1, [['08/06/2026', '93354', '$52.65']]),
+      withExtra(2, [['08/13/2026', '93363', '$35.90']]),
+    ])
+    expect(tables).toHaveLength(1)
+    expect(tables[0]?.title).toBe('Previous Balances')
+    expect(tables[0]?.slug).toBe('previous-balances')
+    expect(tables[0]?.rows).toEqual([
+      { page: 1, cells: ['08/06/2026', '93354', '$52.65'] },
+      { page: 2, cells: ['08/13/2026', '93363', '$35.90'] },
+    ])
+  })
+
+  it('writes it as its own CSV, with a page column only when there are pages', () => {
+    const [many] = extraTables([withExtra(1, [['08/06/2026', '93354', '$52.65']])])
+    expect(toTableCsv(many!, 2).split('\r\n')).toEqual([
+      'Page,Date,Invoice,Balance',
+      '1,08/06/2026,93354,$52.65',
+    ])
+    expect(toTableCsv(many!, 1).split('\r\n')).toEqual([
+      'Date,Invoice,Balance',
+      '08/06/2026,93354,$52.65',
+    ])
+  })
+
+  it(`keeps the document export to the document's own table`, () => {
+    const json = toDocumentJson([withExtra(1, [['08/06/2026', '93354', '$52.65']])], 1)
+    // The rows are the invoice's; the balances are beside them, not among them.
+    expect(json?.rows).toEqual([{ QTY: '1', DESCRIPTION: 'WIDGET', PRICE: '2.00' }])
+    expect(json && 'tables' in json ? json.tables : undefined).toEqual([
+      {
+        title: 'Previous Balances',
+        headers: ['Date', 'Invoice', 'Balance'],
+        rows: [{ Date: '08/06/2026', Invoice: '93354', Balance: '$52.65' }],
+      },
+    ])
+  })
+})
+
+describe('toSkippedLog', () => {
+  const page = (number: number, skipped: OcrResult['skipped']): ExportPage => ({
+    page: number,
+    result: { ...table(HEADERS, [['1', 'WIDGET', '2.00']]), skipped },
+  })
+
+  it(`gathers every page's skipped lines, and the pages that produced none`, () => {
+    const log = toSkippedLog(
+      [
+        page(1, [
+          { reason: 'note', text: 'OUT OF STOCK', confidence: 0.912, y: 120 },
+          { reason: 'summary', text: 'TOTAL  214.50', confidence: 0.98, y: 400 },
+        ]),
+        page(3, [{ reason: 'furniture', text: 'Page 3 of 3', confidence: 0.8, y: 900 }]),
+      ],
+      3,
+      [{ page: 2, message: 'The reader returned no words.' }],
+    )
+    expect(log.pages).toBe(3)
+    expect(log.skipped).toBe(4)
+    expect(log.failedPages).toEqual([2])
+    expect(log.rows.map(({ page: on, reason, text }) => [on, reason, text])).toEqual([
+      [1, 'note', 'OUT OF STOCK'],
+      [1, 'summary', 'TOTAL  214.50'],
+      [2, 'page-error', 'The reader returned no words.'],
+      [3, 'furniture', 'Page 3 of 3'],
+    ])
+    // Confidence is rounded for the log; a page that was never read has none.
+    expect(log.rows[0]?.confidence).toBe(0.91)
+    expect(log.rows[2]?.confidence).toBeUndefined()
+  })
+
+  it('says nothing was skipped when every line was kept', () => {
+    const log = toSkippedLog([page(1, [])], 1)
+    expect(log.skipped).toBe(0)
+    expect(log.failedPages).toBeUndefined()
+    expect(log.rows).toEqual([])
+  })
+
+  it('writes the log as CSV, quoting a line that carries a comma', () => {
+    const csv = toSkippedCsv(
+      [page(1, [{ reason: 'unplaced', text: 'TERMS: NET 30, THEN 1.5%', confidence: 0.5, y: 10 }])],
+      2,
+      [{ page: 2, message: 'Reading stopped before this page.' }],
+    )
+    expect(csv.split('\r\n')).toEqual([
+      'Page,Reason,Text,Confidence',
+      '1,Line that belongs to no item,"TERMS: NET 30, THEN 1.5%",0.50',
+      '2,Page produced no rows,Reading stopped before this page.,',
     ])
   })
 })

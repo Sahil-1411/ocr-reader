@@ -3,7 +3,7 @@
  * builders serve both readers and `frontend/tools/score.test.ts`.
  */
 
-import { isLotteryHeader, readColumnTable, type ColumnGuide } from '../layout/columns'
+import { isLotteryHeader, readColumnTables, type ColumnGuide } from '../layout/columns'
 import {
   chooseReceiptKind,
   findInventoryHeader,
@@ -187,7 +187,10 @@ export function assembleReceipt(
   const rows = inventoryRowsFromWords(words, rowOverlapRatio)
   const settlements = settlementRowsFromWords(words, rowOverlapRatio)
   const invoice = invoiceRowsFromWords(words, rowOverlapRatio)
-  const table = readColumnTable(words, rowOverlapRatio, guide)
+  // Every table the page prints. The first is the page's own; the rest are
+  // printed under it, such as an invoice's `Previous Balances`.
+  const tables = readColumnTables(words, rowOverlapRatio, guide)
+  const table = tables[0] ?? null
   // A wholesale invoice's item numbers look like game-pack codes, so the
   // lottery readers will claim the page and keep only two cells. A real column
   // header wins unless this is actually a lottery ticket.
@@ -234,7 +237,19 @@ export function assembleReceipt(
     fields,
     tableRows,
     ...(kind === 'table' && table ? { columnBounds: table.bounds } : {}),
+    tables:
+      kind === 'table'
+        ? tables.map(({ title, headers: own, rows: cells, bounds }) => ({
+            ...(title ? { title } : {}),
+            headers: own,
+            rows: cells,
+            columnBounds: bounds,
+          }))
+        : [],
     validation,
+    // Only the column reader keeps a log; a page read some other way has no
+    // account of what it left out.
+    skipped: kind === 'table' ? tables.flatMap((each) => each.skipped).sort((a, b) => a.y - b.y) : [],
     processingMeta: { ...facts, wordCount: words.length, totalMs: 0, warnings },
   }
 }

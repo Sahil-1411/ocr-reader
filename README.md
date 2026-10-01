@@ -53,7 +53,7 @@ The server needs Python 3.12 and Node (to build the frontend). Upload this repo,
 pnpm --dir frontend install
 pnpm --dir frontend build
 # one-time: see python/README.md for the 3.12 virtualenv
-uv pip install -r python/requirements.txt
+uv pip install -r python/requirements.txt --excludes python/excludes.txt
 .venv/bin/python python/serve.py --live --warm
 ```
 
@@ -84,6 +84,14 @@ Python stops at word boxes. Rows are built in TypeScript, so the app and
   columns against TOTALS, the settlement count against `Packs Total Settled`, the invoice
   header lines against `TOTAL DUE`. Anything solved or unreadable is listed above the
   table and its row highlighted.
+- **Several tables on a page** are read as several tables. An invoice prints its items, and
+  under them something like `Previous Balances` with titles of its own; reading the second
+  under the first's columns filed its dates as descriptions. Each extra table is shown under
+  the main one and downloads as its own CSV, and the document's JSON carries them in `tables`.
+- **Skipped & Removed** is the second export, kept apart from the data one. It logs every
+  printed line the reading left out — totals, page furniture, a line that belongs to no
+  item, a note such as `OUT OF STOCK` cut out of an item's description — and any page that
+  produced no rows, each with its page, reason and confidence.
 
 ## Where the code lives
 

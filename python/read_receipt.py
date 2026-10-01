@@ -541,10 +541,39 @@ def load_engine():
     except ImportError as error:  # pragma: no cover - environment problem
         raise SystemExit(
             "rapidocr-onnxruntime is not installed.\n"
-            "    python3 -m pip install rapidocr-onnxruntime opencv-python-headless\n"
+            "    uv pip install -r python/requirements.txt --excludes python/excludes.txt\n"
             f"({error})"
         ) from error
+    builds = opencv_builds()
+    if len(builds) > 1:
+        print(
+            f"warning: {len(builds)} OpenCV builds are installed ({', '.join(builds)}).\n"
+            "They share one cv2 folder, so which loads depends on install order.\n"
+            "Keep only the headless one:\n"
+            f"    uv pip uninstall {' '.join(builds)}\n"
+            "    uv pip install -r python/requirements.txt --excludes python/excludes.txt",
+            file=sys.stderr,
+        )
     return RapidOCR()
+
+
+def opencv_builds() -> list[str]:
+    """The OpenCV wheels installed. Every one of them unpacks into `cv2`."""
+    from importlib import metadata
+
+    found = []
+    for name in (
+        "opencv-python",
+        "opencv-python-headless",
+        "opencv-contrib-python",
+        "opencv-contrib-python-headless",
+    ):
+        try:
+            metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+        found.append(name)
+    return found
 
 
 def read_words(

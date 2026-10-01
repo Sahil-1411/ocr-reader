@@ -48,6 +48,25 @@ export interface TableRow {
 }
 
 /**
+ * One table printed on the page, under its own column titles.
+ *
+ * A page is not one table by nature: an invoice prints its items, and under
+ * them the customer's previous balances under titles of their own.
+ */
+export interface TableBlock {
+  /**
+   * The heading printed over this table, when it has one of its own. The
+   * page's first table is the page's own and has none.
+   */
+  title?: string
+  /** The column titles as printed, left to right. */
+  headers: string[]
+  rows: TableRow[]
+  /** Left edge of each column, in page pixels. */
+  columnBounds?: number[]
+}
+
+/**
  * One instant-inventory row, matching the printed header
  * Game / Name / Int / Rec / Act / Set.
  */
@@ -60,6 +79,31 @@ export interface InventoryRow {
   set: string
   /** Mean word confidence in [0, 1]. Omitted from the public JSON. */
   confidence: number
+}
+
+/**
+ * Why a printed line, or part of one, is not in the rows.
+ *
+ * `note` is text cut out of a line that was kept; every other reason belongs
+ * to a whole line the reader left out. A printed divider has no reason of its
+ * own: a row of dashes is not data, and logging one would only bury the rest.
+ */
+export type SkipReason =
+  | 'note'
+  | 'furniture'
+  | 'repeated-header'
+  | 'summary'
+  | 'unplaced'
+
+/** One line, or one piece of a line, that the reader did not keep. */
+export interface SkippedLine {
+  reason: SkipReason
+  /** What was printed, cells joined left to right in column order. */
+  text: string
+  /** Mean word confidence in [0, 1]. */
+  confidence: number
+  /** Top edge in page pixels, so the log reads in printed order. */
+  y: number
 }
 
 /**
@@ -126,6 +170,13 @@ export interface OcrResult {
   /** Column-aligned rows. Filled when {@link kind} is `table`. */
   tableRows: TableRow[]
   /**
+   * Every table printed on the page, in printed order, when {@link kind} is
+   * `table`. The first is the page's own — the one {@link headers} and
+   * {@link tableRows} carry — and the rest are tables printed under it, such
+   * as an invoice's `Previous Balances`.
+   */
+  tables: TableBlock[]
+  /**
    * Left edge of each printed column, in page pixels. Present for a column
    * table so a later page of the same PDF can reuse the header.
    */
@@ -136,6 +187,13 @@ export interface OcrResult {
    * check the page offers passed.
    */
   validation: ValidationIssue[]
+  /**
+   * Lines the reader printed over: page furniture, totals, dividers, and notes
+   * cut out of an item. Logged so a reading can be checked against the page
+   * without guessing what became of the rest of it. Only a column table keeps
+   * this log; the lottery readers leave it empty.
+   */
+  skipped: SkippedLine[]
   processingMeta: ProcessingMeta
 }
 

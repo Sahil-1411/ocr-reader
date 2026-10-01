@@ -158,41 +158,55 @@ button {
 .app {
   width: 100%;
   margin: 0 auto;
-  padding: 24px 20px 80px;
+  padding: 0 0 80px;
 }
 
 /* --------------------------------------------------------------------------
    Header & Navbar
    -------------------------------------------------------------------------- */
 
+.app__top {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin-bottom: 16px;
+  padding: 8px 16px 8px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+
 .app__header {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  min-height: 36px;
 }
 
 .app__brand {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .app__logo {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   color: #ffffff;
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.28);
   flex-shrink: 0;
+}
+
+.app__logo svg {
+  width: 18px;
+  height: 18px;
 }
 
 .app__title-row {
@@ -203,30 +217,87 @@ button {
 
 .app__title {
   margin: 0;
-  font-size: 21px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  line-height: 1.2;
   color: var(--text);
 }
 
-.app__badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
+.app__subtitle {
+  margin: 1px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.app__subtitle {
-  margin: 3px 0 0;
+/* The read and its actions, between the title and the theme switch. */
+.app__dock {
+  display: flex;
+  flex: 1 1 380px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.read-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--text-muted);
-  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Two classes deep, so the row keeps one line against `.btn-row`'s wrap. */
+.app__dock .btn-row {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.app__dock .btn--sm {
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+/* A docked header carries the read instead of the tagline, and lets the read
+   drop to a line of its own when the title and theme leave it no room. */
+.app__header--docked {
+  flex-wrap: wrap;
+}
+
+.app__header--docked .app__subtitle {
+  display: none;
+}
+
+/* Below the laptop breakpoint the read drops to a line of its own under the
+   title, and the theme switch keeps the end of the first line. */
+@media (max-width: 1024px) {
+  .app__header--docked .app__controls {
+    order: 1;
+  }
+
+  .app__header--docked .app__dock {
+    order: 2;
+    flex: 1 0 100%;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
 }
 
 .app__controls {
@@ -235,39 +306,24 @@ button {
   gap: 14px;
 }
 
-.privacy-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  background: var(--ok-soft);
-  border: 1px solid var(--ok-border);
-  color: var(--ok-text);
-  font-size: 12px;
-  font-weight: 500;
+/* Nothing was set aside: a statement, not a control. */
+.read-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.privacy-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
-  animation: pulse-dot 2.5s infinite ease-in-out;
+/* The chevron on a button that opens a panel, pointing the way it will go. */
+.chevron {
+  margin-left: 1px;
+  opacity: 0.7;
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-@keyframes pulse-dot {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.3);
-    opacity: 0.7;
-  }
+.chevron--up {
+  transform: rotate(180deg);
 }
+
 
 /* Segmented Theme Switcher */
 .segmented {
@@ -317,6 +373,7 @@ button {
   gap: 22px;
   grid-template-columns: minmax(0, 1fr);
   width: 100%;
+  padding: 0 20px;
 }
 
 @media (min-width: 900px) {
@@ -478,6 +535,49 @@ button {
   color: var(--text-muted);
 }
 
+.btn--warn {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.btn--alert {
+  border-color: var(--err-border);
+  background: var(--err-soft);
+  color: var(--err-text);
+}
+
+/* Specific enough to keep its own colour against `.btn:hover`, which would
+   otherwise grey the border of a tinted button. */
+.btn--warn:hover:not(:disabled) {
+  border-color: var(--warn-text);
+}
+
+.btn--alert:hover:not(:disabled) {
+  border-color: var(--err-text);
+}
+
+/* A toggle whose panel is open. */
+.btn--on {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.btn--warn.btn--on {
+  background: transparent;
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.btn--alert.btn--on {
+  background: transparent;
+  border-color: var(--err-border);
+  color: var(--err-text);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .btn--ghost:hover:not(:disabled) {
   background: var(--bg-sunken);
   color: var(--text);
@@ -521,7 +621,8 @@ button {
   gap: 12px;
   padding: 8px 12px;
   border: 1.5px dashed var(--border-strong);
-  border-radius: var(--radius-md);
+  /* border-radius: var(--radius-md); */
+  margin-top: 10px;
   background: var(--bg-sunken);
   text-align: left;
   transition: all 160ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -1262,6 +1363,15 @@ button {
   background: var(--bg-sunken);
 }
 
+/* The skipped log prints whole lines; a long one is cut to keep the card narrow. */
+.fields td.log-text {
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 /* Tone Row Highlights */
 .fields__row--low td,
 .fields tbody tr.fields__row--low:hover td {
@@ -1438,17 +1548,92 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   Export Card & JSON Drawer
+   Dock panels — the raw JSON and the skipped log, under the bar
    -------------------------------------------------------------------------- */
 
-.export-card {
-  margin-top: 4px;
+.dock-panel {
+  display: flex;
+  flex-direction: column;
+  margin: -4px 16px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.dock-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+}
+
+.dock-panel__title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.dock-panel__head .count {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dock-panel__actions {
+  margin-left: auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.dock-panel__actions .btn--sm {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.dock-panel__close {
+  padding: 2px 6px;
+}
+
+.dock-panel__body {
+  overflow: auto;
+  max-height: min(42vh, 340px);
+}
+
+.dock-panel__body .table-responsive {
+  border: 0;
+  border-radius: 0;
+}
+
+/* The printed line takes the slack, so the reason sits beside it rather than
+   across the panel from it. */
+.dock-panel__body .fields {
+  width: 100%;
+}
+
+.dock-panel__body .fields th.col--wide,
+.dock-panel__body .fields td.log-text {
+  width: 100%;
+}
+
+.dock-panel__body .json-preview {
+  margin: 0;
 }
 
 .export-title-group {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   color: var(--accent);
 }
 
@@ -1460,9 +1645,7 @@ button {
 
 .json-preview {
   margin: 0;
-  padding: 16px;
-  max-height: 360px;
-  overflow: auto;
+  padding: 14px 16px;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
@@ -1517,7 +1700,21 @@ button {
 /* Tablets (Portrait & Landscape: 641px - 1024px) */
 @media (min-width: 641px) and (max-width: 1024px) {
   .app {
-    padding: 20px 16px 60px;
+    padding: 0 0 60px;
+  }
+
+  .app__top {
+    padding: 8px 16px;
+  }
+
+  .app__grid {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .dock-panel {
+    margin-left: 16px;
+    margin-right: 16px;
   }
 
   .preview {
@@ -1540,54 +1737,41 @@ button {
 /* Mobile Screens (<= 640px) */
 @media (max-width: 640px) {
   .app {
-    padding: 12px 10px 48px;
+    padding: 0 0 48px;
   }
 
-  /* Header on Mobile */
+  .app__top {
+    padding: 8px 10px;
+    margin-bottom: 12px;
+  }
+
+  .app__grid {
+    padding: 0 10px;
+  }
+
+  .dock-panel {
+    margin: -4px 10px 12px;
+  }
+
+  /* Header stays one row: brand left, theme right. */
   .app__header {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
-    margin-bottom: 14px;
-    padding-bottom: 12px;
-  }
-
-  .app__brand {
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .app__logo {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-  }
-
-  .app__title {
-    font-size: 19px;
-  }
-
-  .app__badge {
-    font-size: 10px;
-    padding: 1px 6px;
-  }
-
-  .app__subtitle {
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .app__controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
     gap: 8px;
   }
 
-  .privacy-pill {
-    padding: 3px 8px;
-    font-size: 11px;
+  .app__brand {
+    gap: 8px;
+  }
+
+  .app__subtitle {
+    display: none;
+  }
+
+  .app__controls {
+    flex-shrink: 0;
+  }
+
+  .segmented__label {
+    display: none;
   }
 
   .segmented__option {
@@ -1793,22 +1977,32 @@ button {
     word-break: break-word;
   }
 
-  /* Export Card on Mobile */
-  .export-card .card__head {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
+  /* The actions scroll sideways rather than wrapping onto a third line. */
+  .app__dock {
+    gap: 8px;
   }
 
-  .export-card .btn-row {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 6px;
-    width: 100%;
+  /* The row count is in the results panel too; the chip is not. */
+  .read-count {
+    display: none;
   }
 
-  .export-card .btn-row .btn--ghost {
-    grid-column: span 2;
+  .app__actions {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .app__actions::-webkit-scrollbar {
+    display: none;
+  }
+
+  .app__actions .btn {
+    flex-shrink: 0;
+  }
+
+  .dock-panel__head {
+    padding-left: 10px;
   }
 
   /* Empty State on Mobile */
@@ -1835,10 +2029,6 @@ button {
 
 /* Extra Small Phones (< 440px) */
 @media (max-width: 440px) {
-  .privacy-text {
-    display: none;
-  }
-
   /* Search and tabs on one row, the ticket's title and count on the next. */
   .table-controls {
     flex-wrap: wrap;

@@ -13,7 +13,9 @@ const settlements: OcrResult = {
   ],
   fields: [],
   tableRows: [],
+  tables: [],
   validation: [],
+  skipped: [],
   processingMeta: {
     reader: 'python',
     watermarkSuppressed: false,

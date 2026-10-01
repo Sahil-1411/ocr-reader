@@ -1,0 +1,8 @@
+# Packages never to install, for `uv pip install ... --excludes python/excludes.txt`.
+#
+# rapidocr-onnxruntime depends on the GUI build of OpenCV; requirements.txt
+# installs the headless build instead. Both unpack into the same `cv2` folder, so
+# with both installed whichever went in last wins, and uninstalling either one
+# deletes files the other needs. The GUI build also links libGL, which a minimal
+# Linux server usually lacks, and there `import cv2` fails.
+opencv-python

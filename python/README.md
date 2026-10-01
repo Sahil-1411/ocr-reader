@@ -24,10 +24,19 @@ either:
 ```sh
 brew install uv
 uv venv --python 3.12 .venv
-uv pip install -r python/requirements.txt
+uv pip install -r python/requirements.txt --excludes python/excludes.txt
 ```
 
 Then run everything through `.venv/bin/python`.
+
+The exclude list keeps out `opencv-python`. `rapidocr-onnxruntime` asks for that
+GUI build, while this installs the headless one, and the two unpack into the
+same `cv2` folder: whichever went in last wins, and uninstalling either one
+breaks the other. On a Linux server the GUI build also needs libGL. The reader
+prints a warning at startup when more than one build is installed. Plain `pip`
+has no exclude option; after `pip install -r python/requirements.txt`, run
+`pip uninstall -y opencv-python opencv-python-headless` and then
+`pip install "opencv-python-headless>=4.9,<5"`.
 
 `uv` is worth the extra install because it fetches its own standalone
 interpreter, which avoids two separate problems with the Homebrew Python here:
@@ -134,6 +143,11 @@ the repo root:
 The page calls `/read` on its own host. Vite forwards that to `127.0.0.1:8756`.
 `--warm` builds the models at startup rather than on the first read, which
 otherwise costs about 25 seconds on the first receipt.
+
+Reads run one at a time. ONNX Runtime already spreads one read over every
+core, so two at once would only make both slower and double the memory. Up to
+8 reads wait in line (the one being read included); past that `/read` answers
+503 and the page can be read again.
 
 ```
 browser: image → PNG → POST /read

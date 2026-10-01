@@ -63,6 +63,11 @@ ALLOWED_ORIGINS = {
 
 MAX_UPLOAD_BYTES = 40 * 1024 * 1024
 
+# Reads the server holds at once: the one being read and those waiting behind
+# it. Each waiting read keeps its upload in memory, so past this the server says
+# it is busy rather than queueing without bound.
+MAX_PENDING_READS = 8
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_STATIC = REPO_ROOT / "frontend" / "dist"
 
@@ -73,9 +78,20 @@ _engine = None
 _static_root: Path | None = None
 _extra_origins: set[str] = set()
 
+# One read at a time. ONNX Runtime already spreads a single read over every
+# core, so two at once only make both slower and double the memory; in a queue
+# each read takes as long as it would alone.
+_read_lock = threading.Lock()
+_pending_reads = threading.BoundedSemaphore(MAX_PENDING_READS)
+
 
 def engine():
-    """Built once. Session setup costs seconds; reading costs hundreds of ms."""
+    """
+    Built once. Session setup costs seconds; reading costs hundreds of ms.
+
+    Only called under `_read_lock` or before the server starts, so two first
+    reads arriving together cannot both build it.
+    """
     global _engine
     if _engine is None:
         print("loading PP-OCR models…", flush=True)
@@ -198,19 +214,34 @@ class Handler(BaseHTTPRequestHandler):
             self._send(413, {"error": "image too large"}, origin)
             return
 
+        # Read the body even when the answer is "busy": replying with the upload
+        # left unread breaks the connection, and the browser then reports a
+        # network error instead of the reply.
         raw = self.rfile.read(length)
 
+        if not _pending_reads.acquire(blocking=False):
+            print(f"busy: {MAX_PENDING_READS} reads pending, refused one", flush=True)
+            self._send(503, {"error": "the reader is busy, try again shortly"}, origin)
+            return
+
         try:
-            started = time.perf_counter()
-            rgb = decode_image(raw)
-            page, ratio = suppress_colored_watermark(rgb)
-            words = read_words(engine(), page, scale=2.0)
-            elapsed = round((time.perf_counter() - started) * 1000)
+            arrived = time.perf_counter()
+            with _read_lock:
+                started = time.perf_counter()
+                rgb = decode_image(raw)
+                page, ratio = suppress_colored_watermark(rgb)
+                words = read_words(engine(), page, scale=2.0)
+                finished = time.perf_counter()
         except Exception as error:  # noqa: BLE001 - report, never crash the server
             self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
             return
+        finally:
+            _pending_reads.release()
 
-        print(f"read {page.shape[1]}x{page.shape[0]} -> {len(words)} words in {elapsed}ms", flush=True)
+        elapsed = round((finished - started) * 1000)
+        waited = round((started - arrived) * 1000)
+        queued = f" after {waited}ms in the queue" if waited else ""
+        print(f"read {page.shape[1]}x{page.shape[0]} -> {len(words)} words in {elapsed}ms{queued}", flush=True)
         self._send(
             200,
             {

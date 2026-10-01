@@ -53,7 +53,7 @@ The server needs Python 3.12 and Node (to build the frontend). Upload this repo,
 pnpm --dir frontend install
 pnpm --dir frontend build
 # one-time: see python/README.md for the 3.12 virtualenv
-uv pip install -r python/requirements.txt
+uv pip install -r python/requirements.txt --excludes python/excludes.txt
 .venv/bin/python python/serve.py --live --warm
 ```
 

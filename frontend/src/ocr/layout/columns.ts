@@ -409,7 +409,10 @@ function findHeader(
     if (group.length < 3) return null
     const { bottom, words: headerWords } = bandOf(group)
     if (headerWords.some((word) => /^\$?[\d,]*\d\.\d{2}$/.test(word.text.trim()))) return null
-    const columns = groupHeaderColumns(headerWords)
+    // Deeper than `nextLine`: telling two columns from one wrapped title takes
+    // several rows, not the one line that scores the header.
+    const body = words.filter((word) => word.y > bottom && word.y < bottom + height * 14)
+    const columns = groupHeaderColumns(headerWords, body)
     if (columns.length < 3) return null
     const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
     if (scoreHeader(columns, nextLine, 4) < 28) return null
@@ -445,7 +448,105 @@ function findHeader(
  * such as `CASE QTY` is two words separated by a real space. The next column
  * starts further along, even when a trailing space makes the boxes touch.
  */
-function groupHeaderColumns(line: readonly WordBox[]): HeaderColumn[] {
+/** The left and right edge of a stack of header words. */
+function spanOf(words: readonly WordBox[]): { x: number; right: number } {
+  return {
+    x: Math.min(...words.map((word) => word.x)),
+    right: Math.max(...words.map((word) => word.x + word.width)),
+  }
+}
+
+/** Whether a printed word sits under a title, rather than merely near it. */
+function sitsUnder(word: WordBox, span: { x: number; right: number }): boolean {
+  const overlap = Math.min(word.x + word.width, span.right) - Math.max(word.x, span.x)
+  if (overlap <= 0) return false
+  return overlap >= Math.min(word.width, span.right - span.x) * 0.3
+}
+
+/**
+ * Whether the rows under the header fill both of two neighbouring titles.
+ *
+ * Two titles a space apart are usually one title in two words — `CASE QTY`,
+ * `UNT QTY` — and the page prints a single value under the pair. When instead
+ * each title has its own value on the same line, row after row, they are two
+ * columns however close they were set: `Unit Price` beside `Sold Price`.
+ */
+function bothCarryValues(
+  left: readonly WordBox[],
+  right: readonly WordBox[],
+  below: readonly WordBox[],
+  height: number,
+): boolean {
+  if (below.length === 0) return false
+  const leftSpan = spanOf(left)
+  const rightSpan = spanOf(right)
+  // Two columns are parted by a gutter the print respects. A column of free
+  // text has none: its words run on past where the titles happen to break,
+  // and parting there would cut descriptions in half.
+  const gutter = (leftSpan.right + rightSpan.x) / 2
+  const straddles = below.filter(
+    (word) => word.text.trim() && word.x < gutter - 1 && word.x + word.width > gutter + 1,
+  ).length
+  if (straddles > 0) return false
+
+  const lines = new Map<number, WordBox[]>()
+  for (const word of below) {
+    if (!word.text.trim()) continue
+    const key = Math.round((word.y + word.height / 2) / Math.max(height * 0.8, 1))
+    const list = lines.get(key) ?? []
+    list.push(word)
+    lines.set(key, list)
+  }
+
+  let filled = 0
+  for (const line of lines.values()) {
+    const underLeft = line.filter((word) => sitsUnder(word, leftSpan))
+    const underRight = line.filter((word) => sitsUnder(word, rightSpan))
+    // The same word reaching under both titles is one value, not two.
+    if (underLeft.some((word) => !underRight.includes(word)) && underRight.some((word) => !underLeft.includes(word))) {
+      filled += 1
+      if (filled >= 2) return true
+    }
+  }
+  return false
+}
+
+/**
+ * Part a run of titles wherever the rows beneath fill both sides of it.
+ *
+ * Titles are joined on sight when they sit a space apart, which is right for
+ * `CASE QTY` and wrong for `Unit Price Sold Price`. The page itself settles
+ * it, so the joining is undone here rather than guessed at above: the widest
+ * gap is tried first, and each half is parted again in turn.
+ */
+function splitByBody(
+  stacks: readonly WordBox[][],
+  below: readonly WordBox[],
+  height: number,
+): WordBox[][][] {
+  if (stacks.length < 2) return [[...stacks]]
+  const candidates = stacks
+    .map((_, index) => index)
+    .slice(1)
+    .map((index) => ({
+      index,
+      gap:
+        Math.min(...stacks[index]!.map((word) => word.x)) -
+        Math.max(...stacks.slice(0, index).flat().map((word) => word.x + word.width)),
+    }))
+    .sort((a, b) => b.gap - a.gap)
+
+  for (const { index } of candidates) {
+    const left = stacks.slice(0, index)
+    const right = stacks.slice(index)
+    if (bothCarryValues(left.flat(), right.flat(), below, height)) {
+      return [...splitByBody(left, below, height), ...splitByBody(right, below, height)]
+    }
+  }
+  return [[...stacks]]
+}
+
+function groupHeaderColumns(line: readonly WordBox[], below: readonly WordBox[] = []): HeaderColumn[] {
   const filtered = [...line]
     .filter((word) => word.text.trim().length > 0)
     .sort((a, b) => a.x - b.x || a.y - b.y)
@@ -495,22 +596,27 @@ function groupHeaderColumns(line: readonly WordBox[]): HeaderColumn[] {
 
   // `CASE QTY` is two words on one baseline. A title that already wrapped
   // does not absorb the next title, even when the boxes nearly touch.
-  const groups: WordBox[][] = []
+  // Each group is the stacks it was built from, so the split below can only
+  // part them where a title ends, never through a wrapped one.
+  const groups: WordBox[][][] = []
   for (const stack of stacked) {
     const previous = groups[groups.length - 1]
-    if (previous && oneBaseline(previous, height) && oneBaseline(stack, height)) {
-      const prevRight = Math.max(...previous.map((word) => word.x + word.width))
+    const previousWords = previous?.flat() ?? []
+    if (previous && oneBaseline(previousWords, height) && oneBaseline(stack, height)) {
+      const prevRight = Math.max(...previousWords.map((word) => word.x + word.width))
       const gap = Math.min(...stack.map((word) => word.x)) - prevRight
       if (gap > 0 && gap <= height * 0.7) {
-        previous.push(...stack)
+        previous.push(stack)
         continue
       }
     }
-    groups.push([...stack])
+    groups.push([[...stack]])
   }
 
   return groups
-    .map((group) => {
+    .flatMap((group) => splitByBody(group, below, height))
+    .map((stacks) => {
+      const group = stacks.flat()
       const x = Math.min(...group.map((word) => word.x))
       const right = Math.max(...group.map((word) => word.x + word.width))
       return { label: joinLabel(group), x, right }

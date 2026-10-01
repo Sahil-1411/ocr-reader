@@ -137,6 +137,16 @@ function mergeGlyphs(words: readonly WordBox[], runOf: ReadonlyMap<WordBox, numb
         continue
       }
       const run = runOf.get(word)
+      // The same text set a second time in the same place is one printed
+      // word, not two: a PDF may draw a row again to embolden or shade it,
+      // and joining the pair would read `DETOX` as `DETOXDETOX`. Two real
+      // instances of a word stand side by side, so only a box that sits on
+      // top of the one before it counts as a repeat.
+      const overprint =
+        word.text === current.text &&
+        Math.abs(word.x - current.x) <= Math.min(current.width, word.width) * 0.35 &&
+        Math.abs(word.y - current.y) <= Math.max(current.height, word.height) * 0.35
+      if (overprint) continue
       if (run !== undefined && run === currentRun) {
         merged.push(current)
         current = { ...word }

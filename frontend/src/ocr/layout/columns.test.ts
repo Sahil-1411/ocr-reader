@@ -535,6 +535,54 @@ describe('readColumnTable', () => {
     ])
   })
 
+  it('keeps two money columns apart when a figure is printed under each', () => {
+    // `Unit Price` and `Sold Price` are set a space apart, close enough to
+    // read as one wrapped title. The rows below settle it: each carries its
+    // own figure, in its own column, with a clear gutter between them.
+    const header = [
+      word('SKU', 60, 70, 30),
+      word('Product', 150, 70, 58),
+      word('Name', 212, 70, 42),
+      word('/', 258, 70, 8),
+      word('Description', 270, 70, 88),
+      word('Qty', 440, 70, 26),
+      word('Unit', 500, 70, 32),
+      word('Price', 536, 70, 40),
+      word('Sold', 584, 70, 36),
+      word('Price', 624, 70, 40),
+      word('Amount', 700, 70, 56),
+    ]
+    const item = (y: number, sku: string, name: string, qty: string, money: string) => [
+      word(sku, 60, y, 72),
+      word(name, 160, y, 120),
+      word(qty, 455, y, 10),
+      word(money, 530, y, 44),
+      word(money, 618, y, 44),
+      word(money, 710, y, 44),
+    ]
+    const table = readColumnTable([
+      ...header,
+      ...item(110, '484124656693', 'DETOX-CHAMP-ACAI', '1', '47.88'),
+      ...item(140, '888235520193', 'DETOX-CHAMP-BERRY', '1', '47.88'),
+      ...item(170, '395403510073', 'DETOX-CHAMP-GRAPE', '1', '48.00'),
+    ])
+
+    expect(table?.headers).toEqual([
+      'SKU',
+      'Product Name /Description',
+      'Qty',
+      'Unit Price',
+      'Sold Price',
+      'Amount',
+    ])
+    // Each figure stays in its column rather than being run together.
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['484124656693', 'DETOX-CHAMP-ACAI', '1', '47.88', '47.88', '47.88'],
+      ['888235520193', 'DETOX-CHAMP-BERRY', '1', '47.88', '47.88', '47.88'],
+      ['395403510073', 'DETOX-CHAMP-GRAPE', '1', '48.00', '48.00', '48.00'],
+    ])
+  })
+
   it('keeps figures under titles set at the left of their columns', () => {
     // `Price` and `Amount` start their columns; the figures end them, clear of
     // every title. The edges the titles suggest put both figures under Amount.
@@ -647,11 +695,18 @@ describe('assembleReceipt column tables', () => {
     )
     expect(result.kind).toBe('table')
     expect(rowCells(result)).toEqual([])
-    // Nothing is lost quietly: the recap is in the log, with the total named.
+    // Nothing is lost quietly. The recap is read as the table it is, under
+    // titles of its own, rather than piled into the log a line at a time —
+    // `LINES` and `UNITS` are two columns because the page prints a figure
+    // under each. The total is not a row of it, so it stays in the log.
+    expect(result.tables[1]).toMatchObject({
+      headers: ['CATEGORY', 'DESCRIPTION', 'LINES', 'UNITS', 'YOUR COST'],
+    })
+    expect(result.tables[1]?.rows.map((row) => row.cells)).toEqual([
+      ['JUUL', '', '4', '42', '2,564.28'],
+      ['SNUS', '', '24', '274', '5,460.00'],
+    ])
     expect(result.skipped.map(({ reason, text }) => [reason, text])).toEqual([
-      ['unplaced', 'CATEGORY  DESCRIPTION  LINES UNITS  YOUR COST'],
-      ['unplaced', 'JUUL  4 42  2,564.28'],
-      ['unplaced', 'SNUS  24 274  5,460.00'],
       ['summary', 'INVOICE  TOTAL:  13,134.09'],
     ])
   })

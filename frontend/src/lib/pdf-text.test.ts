@@ -40,6 +40,42 @@ describe('textItemsToWords', () => {
     expect(words.map((word) => word.text)).toEqual(['849', 'CASE', 'QTY'])
   })
 
+  it('reads a row the PDF draws twice once', () => {
+    // Some invoices set a shaded row's text a second time in the same place.
+    // Both copies are the same ink, so the reading is the row, not each word
+    // doubled: `DETOX CHAMP`, never `DETOXDETOX CHAMPCHAMP`.
+    const viewport = [1, 0, 0, -1, 0, 200]
+    const run = (str: string, x: number, width: number) => ({
+      str,
+      transform: [12, 0, 0, 12, x, 150] as number[],
+      width,
+      height: 12,
+    })
+    const words = textItemsToWords(
+      [
+        run('DETOX CHAMP', 20, 80),
+        run('DETOX CHAMP', 20, 80),
+        run('47.88', 160, 36),
+        run('47.88', 160, 36),
+      ],
+      viewport,
+    )
+    expect(words.map((word) => word.text)).toEqual(['DETOX', 'CHAMP', '47.88'])
+  })
+
+  it('keeps a word the page really does print twice over', () => {
+    // `11` is two glyphs side by side, not one glyph printed twice.
+    const viewport = [1, 0, 0, -1, 0, 200]
+    const glyph = (str: string, x: number) => ({
+      str,
+      transform: [10, 0, 0, 10, x, 150] as number[],
+      width: 6,
+      height: 10,
+    })
+    const words = textItemsToWords([glyph('1', 20), glyph('1', 26)], viewport)
+    expect(words.map((word) => word.text)).toEqual(['11'])
+  })
+
   it('splits a run on spaces without gluing the words back together', () => {
     const viewport = [1, 0, 0, -1, 0, 200]
     const words = textItemsToWords(

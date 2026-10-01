@@ -234,11 +234,96 @@ button {
   text-overflow: ellipsis;
 }
 
+/* The read and its actions, between the title and the theme switch. */
+.app__dock {
+  display: flex;
+  flex: 1 1 380px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.app__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.read-count {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Two classes deep, so the row keeps one line against `.btn-row`'s wrap. */
+.app__dock .btn-row {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.app__dock .btn--sm {
+  min-height: 28px;
+  padding: 3px 9px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+/* A docked header carries the read instead of the tagline, and lets the read
+   drop to a line of its own when the title and theme leave it no room. */
+.app__header--docked {
+  flex-wrap: wrap;
+}
+
+.app__header--docked .app__subtitle {
+  display: none;
+}
+
+/* Below the laptop breakpoint the read drops to a line of its own under the
+   title, and the theme switch keeps the end of the first line. */
+@media (max-width: 1024px) {
+  .app__header--docked .app__controls {
+    order: 1;
+  }
+
+  .app__header--docked .app__dock {
+    order: 2;
+    flex: 1 0 100%;
+    justify-content: space-between;
+    padding-top: 6px;
+    border-top: 1px solid var(--border);
+  }
+}
+
 .app__controls {
   display: flex;
   align-items: center;
   gap: 14px;
 }
+
+/* Nothing was set aside: a statement, not a control. */
+.read-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The chevron on a button that opens a panel, pointing the way it will go. */
+.chevron {
+  margin-left: 1px;
+  opacity: 0.7;
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.chevron--up {
+  transform: rotate(180deg);
+}
+
 
 /* Segmented Theme Switcher */
 .segmented {
@@ -450,6 +535,49 @@ button {
   color: var(--text-muted);
 }
 
+.btn--warn {
+  border-color: var(--warn-border);
+  background: var(--warn-soft);
+  color: var(--warn-text);
+}
+
+.btn--alert {
+  border-color: var(--err-border);
+  background: var(--err-soft);
+  color: var(--err-text);
+}
+
+/* Specific enough to keep its own colour against `.btn:hover`, which would
+   otherwise grey the border of a tinted button. */
+.btn--warn:hover:not(:disabled) {
+  border-color: var(--warn-text);
+}
+
+.btn--alert:hover:not(:disabled) {
+  border-color: var(--err-text);
+}
+
+/* A toggle whose panel is open. */
+.btn--on {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.btn--warn.btn--on {
+  background: transparent;
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
+.btn--alert.btn--on {
+  background: transparent;
+  border-color: var(--err-border);
+  color: var(--err-text);
+  box-shadow: inset 0 0 0 1px currentColor;
+}
+
 .btn--ghost:hover:not(:disabled) {
   background: var(--bg-sunken);
   color: var(--text);
@@ -493,7 +621,8 @@ button {
   gap: 12px;
   padding: 8px 12px;
   border: 1.5px dashed var(--border-strong);
-  border-radius: var(--radius-md);
+  /* border-radius: var(--radius-md); */
+  margin-top: 10px;
   background: var(--bg-sunken);
   text-align: left;
   transition: all 160ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -1419,40 +1548,30 @@ button {
 }
 
 /* --------------------------------------------------------------------------
-   Export dock — sticky header above the rows
+   Dock panels — the raw JSON and the skipped log, under the bar
    -------------------------------------------------------------------------- */
 
-.export-dock__bar {
+.dock-panel {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.export-group {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex: 1 1 360px;
-  min-width: min(100%, 300px);
-  min-height: 34px;
-  padding: 3px 4px 3px 10px;
+  flex-direction: column;
+  margin: -4px 16px 12px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-.export-group__meta {
+.dock-panel__head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  color: var(--accent);
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
 }
 
-.export-group__label {
+.dock-panel__title {
   margin: 0;
   font-size: 11px;
   font-weight: 700;
@@ -1462,51 +1581,52 @@ button {
   white-space: nowrap;
 }
 
-.export-group .count {
+.dock-panel__head .count {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
 }
 
-.export-group .btn-row {
-  flex-shrink: 1;
+.dock-panel__actions {
+  margin-left: auto;
   flex-wrap: nowrap;
   gap: 4px;
-  min-width: 0;
 }
 
-.export-group .btn--sm {
+.dock-panel__actions .btn--sm {
   min-height: 26px;
   padding: 2px 8px;
   font-size: 12px;
   gap: 4px;
 }
 
-.export-dock__panels {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: -4px 16px 12px;
+.dock-panel__close {
+  padding: 2px 6px;
 }
 
-.export-dock__panel {
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+.dock-panel__body {
   overflow: auto;
-  max-height: min(40vh, 320px);
+  max-height: min(42vh, 340px);
 }
 
-.export-dock__panel .table-responsive {
+.dock-panel__body .table-responsive {
   border: 0;
   border-radius: 0;
 }
 
-.export-dock__panel--code {
-  padding: 0;
-  background: var(--bg-sunken);
+/* The printed line takes the slack, so the reason sits beside it rather than
+   across the panel from it. */
+.dock-panel__body .fields {
+  width: 100%;
+}
+
+.dock-panel__body .fields th.col--wide,
+.dock-panel__body .fields td.log-text {
+  width: 100%;
+}
+
+.dock-panel__body .json-preview {
+  margin: 0;
 }
 
 .export-title-group {
@@ -1587,15 +1707,14 @@ button {
     padding: 8px 16px;
   }
 
-  .app__grid,
-  .export-dock__panels {
+  .app__grid {
     padding-left: 16px;
     padding-right: 16px;
   }
 
-  .export-dock__panels {
-    margin-left: 0;
-    margin-right: 0;
+  .dock-panel {
+    margin-left: 16px;
+    margin-right: 16px;
   }
 
   .preview {
@@ -1630,7 +1749,7 @@ button {
     padding: 0 10px;
   }
 
-  .export-dock__panels {
+  .dock-panel {
     margin: -4px 10px 12px;
   }
 
@@ -1858,35 +1977,32 @@ button {
     word-break: break-word;
   }
 
-  /* Each export group stays one line; buttons scroll if they don't fit. */
-  .export-dock__bar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-    margin-top: 6px;
+  /* The actions scroll sideways rather than wrapping onto a third line. */
+  .app__dock {
+    gap: 8px;
   }
 
-  .export-group {
-    flex: none;
-    padding: 3px 4px 3px 8px;
-  }
-
-  .export-group .count {
+  /* The row count is in the results panel too; the chip is not. */
+  .read-count {
     display: none;
   }
 
-  .export-group .btn-row {
+  .app__actions {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
 
-  .export-group .btn-row::-webkit-scrollbar {
+  .app__actions::-webkit-scrollbar {
     display: none;
   }
 
-  .export-group .btn {
+  .app__actions .btn {
     flex-shrink: 0;
+  }
+
+  .dock-panel__head {
+    padding-left: 10px;
   }
 
   /* Empty State on Mobile */

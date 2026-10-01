@@ -67,19 +67,28 @@ export function readColumnTable(
   const guided = header ? null : usableGuide(guide)
   if (!header && !guided) return null
 
-  const columns = header?.columns ?? guided?.columns ?? []
-  if (columns.length < 3) return null
-  // A guide's columns are edges an earlier page learned, not titles printed on
-  // this one. Their extents are made up, so nothing is placed by them.
-  const titled = header !== null
-  const headerWords = new Set(header?.words ?? [])
+  const lineHeight = median(usable.map((word) => word.height)) || 12
+
+  /**
+   * The table under one set of column titles: every line below them, placed
+   * by their edges.
+   *
+   * `below` is where those titles end, so a second header further down the
+   * page reads only what is printed under itself.
+   */
+  function readUnder(
+    columns: readonly HeaderColumn[],
+    titleWords: readonly WordBox[],
+    below: number,
+    titled: boolean,
+  ): ColumnTable {
+  const headerWords = new Set(titleWords)
   const body = lines.filter(
     (line) =>
       !line.some((word) => headerWords.has(word)) &&
-      !(header && lineBand(line).top < header.bottom - 2),
+      lineBand(line).top >= below - 2,
   )
-  const lineHeight = median(usable.map((word) => word.height)) || 12
-  const printed = header ? columnBounds(header.columns) : (guided?.bounds ?? [])
+  const printed = titled ? columnBounds(columns) : (guided?.bounds ?? [])
   const layout = learnLayout(body, columns, printed, lineHeight, titled)
   const bounds = layout.bounds
   // One printed line below the last, and no further: a blank line ends an item
@@ -205,14 +214,49 @@ export function readColumnTable(
   }
   dropLeadIn()
 
+  skipped.sort((a, b) => a.y - b.y)
+    return { headers: columns.map((column) => column.label), rows, bounds, skipped }
+  }
+
   // One item is enough when the columns are known. The last page of a long
   // invoice often carries a single item above the totals, and refusing it sent
   // that page to the label-and-amount reader. Labels do not count: they fill
   // one cell by nature and say nothing about whether this is a table.
-  if (!rows.some((row) => !row.label)) return null
+  const priced = (table: ColumnTable) => table.rows.some((row) => !row.label)
 
-  skipped.sort((a, b) => a.y - b.y)
-  return { headers: columns.map((column) => column.label), rows, bounds, skipped }
+  if (!header) {
+    const columns = guided?.columns ?? []
+    if (columns.length < 3) return null
+    // A guide's columns are edges an earlier page learned, not titles printed
+    // on this one. Their extents are made up, so nothing is placed by them.
+    const table = readUnder(columns, [], -Infinity, false)
+    return priced(table) ? table : null
+  }
+
+  if (header.columns.length < 3) return null
+  const printedTable = readUnder(header.columns, header.words, header.bottom, true)
+  if (priced(printedTable)) return printedTable
+
+  // The last page of this invoice prints the same column titles over a block
+  // that is not the invoice's items: a recap of the order by category, under
+  // titles of its own. Read that block by those titles rather than letting a
+  // page of its own table fall through to the label-and-amount reader, which
+  // pairs the letterhead with whatever figure is nearest.
+  const inner = findHeader(usable.filter((word) => word.y > header.bottom))
+  if (inner && inner.columns.length >= 3) {
+    const innerTable = readUnder(inner.columns, inner.words, inner.bottom, true)
+    if (priced(innerTable)) {
+      // What the page prints above the recap is page furniture, and the log
+      // is the only place that says so.
+      const above = printedTable.skipped.filter((line) => line.y < inner.bottom)
+      return { ...innerTable, skipped: [...above, ...innerTable.skipped].sort((a, b) => a.y - b.y) }
+    }
+  }
+
+  // Titles printed and nothing priced under them: a page of this table that
+  // carries no items. An empty table says that; null would hand the page to a
+  // reader that would invent rows out of the letterhead.
+  return printedTable
 }
 
 function usableGuide(
@@ -747,6 +791,9 @@ function refineBounds(
       )
       if (hits.length === 1) owned[hits[0]!]!.push(field)
       else if (hits.length === 0) strays.push(field)
+      else {
+        for (const [index, part] of partsAcrossTitles(field, columns)) owned[index]!.push(part)
+      }
     }
   }
   const titleBefore = (field: readonly WordBox[]) => {
@@ -1003,6 +1050,62 @@ function characterWidth(words: readonly WordBox[]): number {
       .map((word) => word.width / word.text.trim().length)
       .filter((width) => width > 0),
   )
+}
+
+/**
+ * A field set across two titles, cut at its widest gap when each half is one
+ * column's own.
+ *
+ * `5CT  04254418` is a size and a UPC, printed a space and a bit apart, which
+ * makes them one field. Dropping it loses the only evidence of where the UPC
+ * column begins — and a UPC four digits shorter than its neighbours' is then
+ * read as part of the size. Both halves must each sit under one title, and a
+ * different one, so a name running past its own column into open space is not
+ * cut: its tail sits under no title at all.
+ */
+function partsAcrossTitles(
+  field: readonly WordBox[],
+  columns: readonly HeaderColumn[],
+): Array<[index: number, part: WordBox[]]> {
+  if (field.length < 2) return []
+  let at = -1
+  let widest = 0
+  for (let index = 1; index < field.length; index += 1) {
+    const previous = field[index - 1]!
+    const gap = field[index]!.x - (previous.x + previous.width)
+    if (gap > widest) {
+      widest = gap
+      at = index
+    }
+  }
+  if (at < 0 || widest <= 0) return []
+  const found: Array<[number, WordBox[]]> = []
+  for (const half of [field.slice(0, at), field.slice(at)]) {
+    const index = titleOf(half, columns)
+    if (index < 0) return []
+    found.push([index, half])
+  }
+  return found[0]![0] === found[1]![0] ? [] : found
+}
+
+/**
+ * The one title `part` is set under, or -1.
+ *
+ * Measured against the narrower of the two, as a title is matched anywhere
+ * else in this file: a short code covers all of its own width under a wide
+ * title, and a name that merely reaches the next title covers little of it.
+ * That is the difference between a value of that column and a value running
+ * past its own.
+ */
+function titleOf(part: readonly WordBox[], columns: readonly HeaderColumn[]): number {
+  const x = Math.min(...part.map((word) => word.x))
+  const right = Math.max(...part.map((word) => word.x + word.width))
+  const hits = columns.flatMap((column, index) => {
+    const overlap = Math.min(right, column.right) - Math.max(x, column.x)
+    const narrower = Math.min(right - x, column.right - column.x)
+    return overlap > 0 && overlap >= narrower * 0.5 ? [index] : []
+  })
+  return hits.length === 1 ? hits[0]! : -1
 }
 
 function horizontalOverlap(field: readonly WordBox[], column: HeaderColumn): number {

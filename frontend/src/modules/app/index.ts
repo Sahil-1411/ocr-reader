@@ -1,4 +1,5 @@
 export { AppHeader } from './AppHeader'
+export { ExportDock } from './ExportDock'
 export { ResultPanel } from './ResultPanel'
 export { TicketPanel } from './TicketPanel'
 export { useReceiptSession } from './useReceiptSession'

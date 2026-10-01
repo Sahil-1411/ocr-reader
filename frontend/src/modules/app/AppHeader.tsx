@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import { useTheme, type ThemePreference } from '../../lib/theme'
 
 const THEMES: { value: ThemePreference; label: string; icon: 'monitor' | 'sun' | 'moon' }[] = [
@@ -43,12 +45,30 @@ function ThemeIcon({ icon }: { icon: 'monitor' | 'sun' | 'moon' }) {
   }
 }
 
-/** Title and the theme switch. */
-export function AppHeader() {
+interface AppHeaderProps {
+  /**
+   * What the read amounts to, shown beside the title: the row count and the
+   * skipped chip. Present only once a document has been read.
+   */
+  status?: ReactNode
+  /** The export buttons, which share this one row with the title and theme. */
+  actions?: ReactNode
+}
+
+/**
+ * The one bar across the top: the title, what has been read, what can be done
+ * with it, and the theme switch.
+ *
+ * A document's actions belong in the same row as its title rather than in a
+ * second strip below it — the window is for reading rows, and a header that
+ * grows every time there is more to say about the read takes that room away.
+ */
+export function AppHeader({ status, actions }: AppHeaderProps) {
   const [theme, setTheme] = useTheme()
+  const docked = status !== undefined || actions !== undefined
 
   return (
-    <header className="app__header">
+    <header className={`app__header${docked ? ' app__header--docked' : ''}`}>
       <div className="app__brand">
         <div className="app__logo" aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -65,6 +85,13 @@ export function AppHeader() {
           <p className="app__subtitle">Instant lottery and receipt reader.</p>
         </div>
       </div>
+
+      {docked && (
+        <div className="app__dock">
+          {status !== undefined && <div className="app__status">{status}</div>}
+          {actions !== undefined && <div className="btn-row app__actions">{actions}</div>}
+        </div>
+      )}
 
       <div className="app__controls">
         <div className="segmented" role="group" aria-label="Theme selector">

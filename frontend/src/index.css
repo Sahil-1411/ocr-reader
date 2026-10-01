@@ -209,20 +209,6 @@ button {
   color: var(--text);
 }
 
-.app__badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  border: 1px solid var(--accent-border);
-}
-
 .app__subtitle {
   margin: 3px 0 0;
   color: var(--text-muted);
@@ -233,40 +219,6 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.privacy-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: var(--radius-full);
-  background: var(--ok-soft);
-  border: 1px solid var(--ok-border);
-  color: var(--ok-text);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.privacy-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ok);
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
-  animation: pulse-dot 2.5s infinite ease-in-out;
-}
-
-@keyframes pulse-dot {
-  0%,
-  100% {
-    transform: scale(1);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.3);
-    opacity: 0.7;
-  }
 }
 
 /* Segmented Theme Switcher */
@@ -1567,11 +1519,6 @@ button {
     font-size: 19px;
   }
 
-  .app__badge {
-    font-size: 10px;
-    padding: 1px 6px;
-  }
-
   .app__subtitle {
     font-size: 12px;
     line-height: 1.4;
@@ -1583,11 +1530,6 @@ button {
     align-items: center;
     width: 100%;
     gap: 8px;
-  }
-
-  .privacy-pill {
-    padding: 3px 8px;
-    font-size: 11px;
   }
 
   .segmented__option {
@@ -1835,10 +1777,6 @@ button {
 
 /* Extra Small Phones (< 440px) */
 @media (max-width: 440px) {
-  .privacy-text {
-    display: none;
-  }
-
   /* Search and tabs on one row, the ticket's title and count on the next. */
   .table-controls {
     flex-wrap: wrap;

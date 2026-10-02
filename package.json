@@ -5,9 +5,10 @@
     "dev": "pnpm --dir frontend dev",
     "build": "pnpm --dir frontend build",
     "preview": "pnpm --dir frontend preview",
-    "test": "pnpm --dir frontend test",
+    "test": "pnpm --dir frontend test && .venv/bin/python -m pytest python/tests -q",
     "lint": "pnpm --dir frontend lint",
     "reader": ".venv/bin/python python/serve.py --warm",
-    "live": ".venv/bin/python python/serve.py --live --warm"
+    "live": ".venv/bin/python python/serve.py --live --warm",
+    "corpus": ".venv/bin/python python/check_corpus.py"
   }
 }

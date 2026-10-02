@@ -1192,6 +1192,30 @@ button {
   white-space: nowrap;
 }
 
+/*
+ * A rule between the columns.
+ *
+ * An invoice with ten columns is wider than the panel, so the table scrolls
+ * sideways and only part of it is ever in view. Without a line between them a
+ * value cannot be traced up to its own title: `$403.9200` under UNIT PRICE
+ * sits a few pixels from the ship quantity on its left, and reads as `5 $403`
+ * and `.9200` in two columns. The column a cell is in is the whole meaning of
+ * the cell, so it is drawn.
+ *
+ * Lighter than the row rule: the rows are what is being read, and the columns
+ * only have to be unambiguous.
+ */
+.fields th:not(:last-child),
+.fields td:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* The pinned columns carry their own edge, and must not draw a second one. */
+.fields th.th--seq,
+.fields td.td--seq {
+  border-right: none;
+}
+
 .fields tbody tr:last-child td {
   border-bottom: none;
 }
@@ -1636,6 +1660,7 @@ button {
   width: 100%;
   height: auto;
   background: #ffffff;
+  object-fit: contain;
 }
 
 .page-thumb__num {
@@ -1712,6 +1737,37 @@ button {
   border-color: var(--ok-border);
   background: var(--ok-soft);
   color: var(--ok-text);
+}
+
+/*
+ * A table taken out of the export.
+ *
+ * Dimmed rather than hidden: the reader chose to leave it out of the JSON,
+ * not to stop looking at it, and the way back is the button in its own head.
+ * The head stays at full strength so that button and the two downloads are
+ * still plainly there to be used.
+ */
+.card--dropped {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.card--dropped .card__body {
+  opacity: 0.45;
+}
+
+.dropped-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .view-more {

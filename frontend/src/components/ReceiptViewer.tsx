@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
+import { useCallback, useRef, useState, type ReactNode, type RefObject } from 'react'
 
 import { exportBaseName } from '../lib/download'
 import { Pager } from './Pager'
-import type { PdfPage } from '../lib/pdf-to-images'
-import type { WordBox } from '../ocr/layout/rows'
+import type { DocumentPage } from '../ocr/api'
+import type { WordBox } from '../ocr/types'
 
 /* -------------------------------------------------------------------------- */
 /* Icons                                                                       */
@@ -54,9 +54,6 @@ function SaveIcon() {
 /* Thumbnails                                                                  */
 /* -------------------------------------------------------------------------- */
 
-/** Longest side a thumbnail is drawn at. Enough to tell two pages apart. */
-const THUMB_SIZE = 160
-
 /** How a page stands with the reader, which its thumbnail shows. */
 export type PageState = 'read' | 'reading' | 'failed' | 'pending'
 
@@ -67,33 +64,15 @@ function PageThumb({
   state,
   onOpen,
 }: {
-  page: PdfPage
+  page: DocumentPage
   index: number
   active: boolean
   state: PageState
   onOpen: (index: number) => void
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-
-  // Drawn once per page: the full raster is far larger than the strip needs,
-  // and scaling it on every render would redraw every page on every click.
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const { imageData } = page
-    const scale = THUMB_SIZE / Math.max(imageData.width, imageData.height)
-    canvas.width = Math.max(1, Math.round(imageData.width * scale))
-    canvas.height = Math.max(1, Math.round(imageData.height * scale))
-    const context = canvas.getContext('2d')
-    if (!context) return
-    const source = document.createElement('canvas')
-    source.width = imageData.width
-    source.height = imageData.height
-    source.getContext('2d')?.putImageData(imageData, 0, 0)
-    context.imageSmoothingQuality = 'high'
-    context.drawImage(source, 0, 0, canvas.width, canvas.height)
-  }, [page])
-
+  // The reader renders the pages, so a thumbnail is the same picture the
+  // viewer shows, drawn small. The browser fetches it once and keeps it, so
+  // paging back and forth costs nothing.
   return (
     <button
       type="button"
@@ -103,7 +82,15 @@ function PageThumb({
       aria-current={active ? 'true' : undefined}
       title={`Page ${index + 1}${state === 'read' ? '' : state === 'failed' ? ' (could not be read)' : state === 'reading' ? ' (reading…)' : ' (not read yet)'}`}
     >
-      <canvas ref={canvasRef} className="page-thumb__canvas" />
+      {/* The page's own proportions, so the strip has its height before the
+          pictures arrive. Without it an unloaded image is zero pixels tall,
+          which leaves it outside the viewport and so never loaded. */}
+      <img
+        src={page.thumbnailUrl}
+        className="page-thumb__canvas"
+        alt=""
+        style={{ aspectRatio: `${page.size.width} / ${page.size.height}` }}
+      />
       <span className="page-thumb__num">{index + 1}</span>
     </button>
   )
@@ -128,8 +115,8 @@ interface ReceiptViewerProps {
   size: { width: number; height: number } | null
   hasPreview: boolean
   fileName: string | null
-  /** Every page of the PDF. Empty for a single image. */
-  pages: readonly PdfPage[]
+  /** Every page of the document. Empty for a single image. */
+  pages: readonly DocumentPage[]
   currentPage: number
   onSwitchPage: (index: number) => void
   stateOf: (index: number) => PageState
@@ -336,7 +323,7 @@ export function ReceiptViewer({
               <div className="thumb-strip" role="list">
                 {pages.map((page, index) => (
                   <PageThumb
-                    key={page.pageNumber}
+                    key={page.page}
                     page={page}
                     index={index}
                     active={index === currentPage}

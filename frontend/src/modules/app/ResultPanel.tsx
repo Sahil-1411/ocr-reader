@@ -13,10 +13,13 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
     busy,
     currentPage,
     isPdfMode,
-    pdfPages,
+    documentPages,
+    extraTables,
     tablePages,
     exportPages,
     fileName,
+    droppedTables,
+    toggleTable,
     onEditPage,
     validateAll,
     resetEdits,
@@ -71,7 +74,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
               )}
               <Pager
                 current={currentPage}
-                total={isPdfMode ? pdfPages.length : 1}
+                total={isPdfMode ? documentPages.length : 1}
                 onSwitch={switchPdfPage}
                 compact
                 label="Pages of extracted data"
@@ -93,7 +96,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
             />
           </div>
         </div>
-      ) : isPdfMode && pdfPages.length > 0 ? (
+      ) : isPdfMode && documentPages.length > 0 ? (
         <div className="card empty-card">
           <div className="card__head">
             <div className="card__head-title">
@@ -105,7 +108,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
             <div className="btn-row">
               <Pager
                 current={currentPage}
-                total={pdfPages.length}
+                total={documentPages.length}
                 onSwitch={switchPdfPage}
                 compact
                 label="Pages of extracted data"
@@ -149,9 +152,12 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
           it, something like `Previous Balances`. Each is itself. */}
       <ExtraTables
         pages={exportPages}
-        total={isPdfMode ? pdfPages.length : 1}
+        tables={extraTables}
+        total={isPdfMode ? documentPages.length : 1}
         currentPage={currentPage}
         fileName={fileName}
+        dropped={droppedTables}
+        onToggleTable={toggleTable}
       />
     </div>
   )

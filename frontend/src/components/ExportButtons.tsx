@@ -14,9 +14,15 @@ export function DownloadIcon() {
   )
 }
 
-/** The copy button, which says so for a moment after it has copied. */
+/**
+ * The copy button, which says so for a moment after it has copied.
+ *
+ * `text` may be a function, and then it is called on the click rather than
+ * before it: what this copies is fetched from the reader, and fetching it
+ * against a button nobody presses is a round trip for nothing.
+ */
 export function CopyButton({ text, label, title, disabled }: {
-  text: string
+  text: string | (() => Promise<string>)
   /** What the button copies, for the label it shows at rest. */
   label: string
   title?: string
@@ -24,7 +30,8 @@ export function CopyButton({ text, label, title, disabled }: {
 }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    await copyText(text)
+    const value = typeof text === 'function' ? await text() : text
+    await copyText(value)
     setCopied(true)
     setTimeout(() => setCopied(false), 1600)
   }

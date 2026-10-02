@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import secrets
 import io
 import json
 import mimetypes
@@ -35,9 +36,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -48,6 +50,20 @@ from read_receipt import (  # noqa: E402
     read_words,
     suppress_colored_watermark,
 )
+from reader.boxes import WordBox  # noqa: E402
+from reader.document import document_json, looks_like_pdf, read_document  # noqa: E402
+from reader.export import (  # noqa: E402
+    ExportPage,
+    PageFailure,
+    extra_tables,
+    to_csv,
+    to_document_json,
+    to_skipped_csv,
+    to_skipped_log,
+    to_table_csv,
+    to_table_json,
+)
+from reader.pdf_text import DPI, render_page  # noqa: E402
 
 # Dev server and preview. A live site is allowed when its Origin host matches
 # the Host header (the page and `/read` are the same server), or when passed
@@ -83,6 +99,45 @@ _extra_origins: set[str] = set()
 # each read takes as long as it would alone.
 _read_lock = threading.Lock()
 _pending_reads = threading.BoundedSemaphore(MAX_PENDING_READS)
+
+# Documents whose pages the page may still ask for a picture of.
+#
+# The reading is returned straight away; the pictures are fetched one at a
+# time as the reader pages through them, so the bytes have to outlive the
+# request that brought them. They are held in memory, never written to disk,
+# and only until the cap or the age pushes them out — a receipt is not
+# something to leave lying on a server.
+PAGE_CACHE_SECONDS = 30 * 60
+PAGE_CACHE_DOCUMENTS = 8
+_documents: "OrderedDict[str, tuple[float, bytes]]" = OrderedDict()
+_documents_lock = threading.Lock()
+
+
+def _remember(data: bytes) -> str:
+    token = secrets.token_urlsafe(18)
+    now = time.time()
+    with _documents_lock:
+        stale = [key for key, (at, _) in _documents.items() if now - at > PAGE_CACHE_SECONDS]
+        for key in stale:
+            del _documents[key]
+        _documents[token] = (now, data)
+        while len(_documents) > PAGE_CACHE_DOCUMENTS:
+            _documents.popitem(last=False)
+    return token
+
+
+def _recall(token: str) -> bytes | None:
+    now = time.time()
+    with _documents_lock:
+        found = _documents.get(token)
+        if found is None:
+            return None
+        at, data = found
+        if now - at > PAGE_CACHE_SECONDS:
+            del _documents[token]
+            return None
+        _documents.move_to_end(token)
+        return data
 
 
 def engine():
@@ -170,9 +225,46 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._send(200, {"status": "ok", "reader": "pp-ocr"}, origin)
             return
+        if path == "/page":
+            self._serve_page(origin)
+            return
         if self._serve_static(path):
             return
         self._send(404, {"error": "not found"}, origin)
+
+    def _serve_page(self, origin: str | None) -> None:
+        """One page of a document already read, as a JPEG, for the viewer."""
+        if not self._origin_ok():
+            self._send(403, {"error": "origin not allowed"}, origin)
+            return
+        query = parse_qs(urlparse(self.path).query)
+        token = (query.get("doc") or [""])[0]
+        try:
+            number = int((query.get("n") or ["1"])[0])
+        except ValueError:
+            self._send(400, {"error": "bad page number"}, origin)
+            return
+        try:
+            width = int((query.get("w") or ["0"])[0])
+        except ValueError:
+            width = 0
+        data = _recall(token)
+        if data is None:
+            self._send(404, {"error": "that document is no longer held"}, origin)
+            return
+        try:
+            body = _page_jpeg(data, number, width=width)
+        except Exception as error:  # noqa: BLE001
+            self._send(400, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(body)))
+        # The picture of a page cannot change under a token that named it.
+        self.send_header("Cache-Control", "private, max-age=1800")
+        self._allow_origin(origin)
+        self.end_headers()
+        self.wfile.write(body)
 
     def _serve_static(self, url_path: str) -> bool:
         if _static_root is None:
@@ -198,7 +290,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             self._send(403, {"error": "origin not allowed"}, origin)
             return
-        if self.path != "/read":
+        route = urlparse(self.path).path
+        if route not in ("/read", "/document", "/export"):
             self._send(404, {"error": "not found"}, origin)
             return
 
@@ -222,6 +315,19 @@ class Handler(BaseHTTPRequestHandler):
         if not _pending_reads.acquire(blocking=False):
             print(f"busy: {MAX_PENDING_READS} reads pending, refused one", flush=True)
             self._send(503, {"error": "the reader is busy, try again shortly"}, origin)
+            return
+
+        if route == "/export":
+            # Shaping an export reads nothing, so it does not wait behind a read.
+            _pending_reads.release()
+            self._write_export(raw, origin)
+            return
+
+        if route == "/document":
+            try:
+                self._read_document(raw, origin, urlparse(self.path).query)
+            finally:
+                _pending_reads.release()
             return
 
         try:
@@ -252,6 +358,155 @@ class Handler(BaseHTTPRequestHandler):
             },
             origin,
         )
+
+
+    def _write_export(self, raw: bytes, origin: str | None) -> None:
+        """
+        The document as one export, from the pages the caller holds.
+
+        Posted back rather than kept here because the app may have had a cell
+        typed into it or a table taken out, and the export is of what is on
+        screen. A caller with nothing to change can ask `/document` for the
+        same thing in one call instead.
+        """
+        try:
+            body = json.loads(raw)
+            pages = [ExportPage.from_json(page) for page in body.get("pages") or []]
+            total = int(body.get("total") or len(pages))
+            dropped = set(body.get("dropped") or [])
+            failures = [
+                PageFailure(page=int(f["page"]), message=str(f["message"]))
+                for f in body.get("failures") or []
+            ]
+            what = body.get("what") or "data"
+            form = body.get("format") or "json"
+        except Exception as error:  # noqa: BLE001
+            self._send(400, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        try:
+            if what == "log":
+                payload = (
+                    to_skipped_csv(pages, total, failures)
+                    if form == "csv"
+                    else to_skipped_log(pages, total, failures)
+                )
+            elif what == "table":
+                wanted = body.get("key")
+                table = next((t for t in extra_tables(pages) if t.key == wanted), None)
+                if table is None:
+                    self._send(404, {"error": "no such table on these pages"}, origin)
+                    return
+                payload = to_table_csv(table, total) if form == "csv" else to_table_json(table, total)
+            else:
+                payload = to_csv(pages, total) if form == "csv" else to_document_json(pages, total, dropped)
+        except Exception as error:  # noqa: BLE001
+            self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        if form == "csv":
+            self._send_text(200, payload or "", "text/csv; charset=utf-8", origin)
+            return
+        self._send(200, payload if payload is not None else {}, origin)
+
+    def _send_text(self, status: int, text: str, content_type: str, origin: str | None) -> None:
+        body = text.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self._allow_origin(origin)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_document(self, raw: bytes, origin: str | None, query: str = "") -> None:
+        """
+        A whole document in, its reading out.
+
+        The page used to do this for itself: rasterise the PDF, read its text
+        layer, recognise what had none, and assemble the rows. All of it is
+        here now, so there is one reader rather than two.
+        """
+        arrived = time.perf_counter()
+        try:
+            with _read_lock:
+                started = time.perf_counter()
+                readings = read_document(raw, _recognise)
+                payload = document_json(readings)
+                finished = time.perf_counter()
+        except Exception as error:  # noqa: BLE001 - report, never crash the server
+            self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        # `?format=` is for a caller that only wants the finished export and
+        # has nothing to edit: one call instead of three.
+        wanted = (parse_qs(query).get("format") or [""])[0]
+        if wanted in ("csv", "json"):
+            pages = [ExportPage.of(r.number, r.result) for r in readings]
+            if wanted == "csv":
+                self._send_text(200, to_csv(pages, len(pages)), "text/csv; charset=utf-8", origin)
+            else:
+                self._send(200, to_document_json(pages, len(pages)) or {}, origin)
+            return
+
+        payload["document"] = _remember(raw)
+        payload["pageCount"] = len(readings)
+        elapsed = round((finished - started) * 1000)
+        waited = round((started - arrived) * 1000)
+        queued = f" after {waited}ms in the queue" if waited else ""
+        rows = sum(len(page["rows"]) for page in payload["pages"])
+        readers = ", ".join(sorted({reading.reader for reading in readings}))
+        print(
+            f"read {len(readings)} page(s) by {readers} -> {rows} rows in {elapsed}ms{queued}",
+            flush=True,
+        )
+        self._send(200, payload, origin)
+
+
+def _recognise(pixels) -> list:
+    """The recogniser, as `reader.document` wants it: pixels in, words out."""
+    page, _ratio = suppress_colored_watermark(pixels)
+    return [
+        WordBox(
+            text=word["text"],
+            x=float(word["x"]),
+            y=float(word["y"]),
+            width=float(word["width"]),
+            height=float(word["height"]),
+            confidence=float(word["confidence"]),
+        )
+        for word in read_words(engine(), page, scale=2.0)
+    ]
+
+
+#: Widths `/page` will render. A request is rounded up to one of these, so a
+#: page is rendered a handful of ways however many sizes the page asks for.
+PAGE_WIDTHS = (200, 800, 1600)
+
+
+def _page_jpeg(data: bytes, number: int, width: int = 0, dpi: int = DPI) -> bytes:
+    """
+    One page of `data` as a JPEG, at or above the width asked for.
+
+    The thumbnail strip wants seven small pictures and the viewer wants one
+    large one. Serving the large one to both made the strip fetch three and a
+    half megabytes to draw seven postage stamps.
+    """
+    from PIL import Image
+
+    if looks_like_pdf(data):
+        image = Image.fromarray(render_page(data, number, dpi)[:, :, :3])
+    else:
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+
+    if width > 0 and width < image.width:
+        wanted = next((step for step in PAGE_WIDTHS if step >= width), image.width)
+        if wanted < image.width:
+            height = max(1, round(image.height * wanted / image.width))
+            image = image.resize((wanted, height), Image.LANCZOS)
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=85)
+    return buffer.getvalue()
 
 
 def _already_serving(port: int) -> bool:

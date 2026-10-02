@@ -1,57 +1,74 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { reduceProgress, type StageMap } from '../../lib/stage-state'
-import { drawImageDataTo, fileToImageData } from '../../lib/image-io'
-import { isPdf, pdfToImages, type PdfPage } from '../../lib/pdf-to-images'
-import { textLayerIsUsable } from '../../lib/pdf-text'
-import { OcrCancelledError, OcrClient } from '../../ocr/client'
-import type { ColumnGuide } from '../../ocr/layout/columns'
-import type { WordBox } from '../../ocr/layout/rows'
-import { rowCells, withCell } from '../../ocr/receipt/assemble'
-import type { PageFailure } from '../../lib/export'
-import { DEFAULT_OPTIONS, type OcrResult, type ProgressEvent } from '../../ocr/types'
+import {
+  readDocument,
+  ReaderError,
+  readerIsReady,
+  type DocumentPage,
+  type ExtraTable,
+  type PageFailure,
+} from '../../ocr/api'
+import { rowCells, withCell } from '../../ocr/result'
+import type { ProgressEvent } from '../../ocr/types'
 import { NO_EDITS, NO_WORDS, type PageRead, type Phase, type ReceiptSession } from './types'
 
-/** One page as it comes back from the reader: its rows and the words behind them. */
-interface Reading {
-  result: OcrResult
-  words: readonly WordBox[]
-}
-
 /** A page the reader has just returned, with nothing edited or accepted yet. */
-function freshRead({ result, words }: Reading): PageRead {
-  return { result, readResult: result, edited: NO_EDITS, validated: NO_EDITS, words }
+function freshRead(page: DocumentPage): PageRead {
+  return {
+    result: page.result,
+    readResult: page.result,
+    edited: NO_EDITS,
+    validated: NO_EDITS,
+    words: page.words,
+  }
 }
 
-/** A table's columns, to read the next page by when it prints no header of its own. */
-function guideFrom(result: OcrResult): ColumnGuide | null {
-  return result.kind === 'table' && result.columnBounds?.length === result.headers.length
-    ? { headers: result.headers, bounds: result.columnBounds }
-    : null
+/**
+ * Draw a page's picture on the canvas the viewer shows.
+ *
+ * The reader renders the pages now, so a picture is a URL rather than pixels
+ * the browser made. It still lands on a canvas, because the overlay is drawn
+ * over it, the zoom reads its size, and the download saves it.
+ */
+function drawPage(canvas: HTMLCanvasElement, url: string, signal: AbortSignal): void {
+  const image = new Image()
+  image.decoding = 'async'
+  image.onload = () => {
+    if (signal.aborted) return
+    canvas.width = image.naturalWidth
+    canvas.height = image.naturalHeight
+    canvas.getContext('2d')?.drawImage(image, 0, 0)
+  }
+  image.src = url
 }
 
-/** Upload, read, edit, and page through one receipt. */
+/** Upload, read, edit, and page through one document. */
 export function useReceiptSession(): ReceiptSession {
   const [phase, setPhase] = useState<Phase>('idle')
   const [stages, setStages] = useState<StageMap>({})
-  // Every page read so far, by page index. An image is page 0 of one.
+  // Every page read, by page index. An image is page 0 of one.
   const [pages, setPages] = useState<ReadonlyMap<number, PageRead>>(new Map())
-  const [pageErrors, setPageErrors] = useState<ReadonlyMap<number, string>>(new Map())
+  const [pageErrors] = useState<ReadonlyMap<number, string>>(new Map())
   const [error, setError] = useState<string | null>(null)
-  const [readerReady, setReaderReady] = useState(false)
   const [hasPreview, setHasPreview] = useState(false)
-  const [previewData, setPreviewData] = useState<ImageData | null>(null)
   const [fileName, setFileName] = useState<string | null>(null)
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null)
 
-  const [pdfPages, setPdfPages] = useState<PdfPage[]>([])
+  /**
+   * Extra tables the reader has taken out of the export, by key. Kept here
+   * rather than in the card that shows them so it survives paging: a table is
+   * dropped for the document, not for the page it happens to be printed on.
+   */
+  const [droppedTables, setDroppedTables] = useState<ReadonlySet<string>>(new Set())
+  const [documentPages, setDocumentPages] = useState<DocumentPage[]>([])
+  const [extraTables, setExtraTables] = useState<ExtraTable[]>([])
   const [currentPage, setCurrentPage] = useState(0)
   const [isPdfMode, setIsPdfMode] = useState(false)
-  const [pdfProcessingPage, setPdfProcessingPage] = useState<number | null>(null)
 
-  const options = useMemo(() => DEFAULT_OPTIONS, [])
   const previewRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const drawRef = useRef<AbortController | null>(null)
 
   const current = pages.get(currentPage)
   const result = current?.result ?? null
@@ -59,216 +76,86 @@ export function useReceiptSession(): ReceiptSession {
   const validated = current?.validated ?? NO_EDITS
   const words = current?.words ?? NO_WORDS
 
-  const client = useMemo(
-    () =>
-      new OcrClient(options, {
-        onReady: () => {
-          setReaderReady(true)
-        },
-        onFatal: (e) => setError(e.message),
-      }),
-    [options],
-  )
-
+  // Whether the reader is up, asked once at start-up so the dropzone can warn
+  // before a file is chosen rather than after.
   useEffect(() => {
-    client.ready().catch(() => {})
-    return () => client.dispose()
-  }, [client])
-
-  useEffect(() => {
-    if (previewRef.current && previewData) {
-      drawImageDataTo(previewRef.current, previewData)
-    }
-  }, [previewData, hasPreview])
-
-  /** Show a PDF page's picture while its rows are read or looked at. */
-  const showPdfPage = useCallback((page: PdfPage) => {
-    setImageDimensions({ width: page.width, height: page.height })
-    setPreviewData(page.imageData)
-    setHasPreview(true)
-    if (previewRef.current) {
-      drawImageDataTo(previewRef.current, page.imageData)
-    }
+    const controller = new AbortController()
+    void readerIsReady(controller.signal).then((ready) => {
+      if (!ready && !controller.signal.aborted) {
+        setError('The reader is not running. Start it with `pnpm reader`.')
+      }
+    })
+    return () => controller.abort()
   }, [])
 
-  /** Read one PDF page from its text layer, or OCR the raster when it has none. */
-  const recognizePage = useCallback(
-    async (page: PdfPage, controller: AbortController, guide: ColumnGuide | null): Promise<Reading> => {
-      const onProgress = (event: ProgressEvent) => {
-        setStages((prev) => reduceProgress(prev, event))
-      }
-      let words: readonly WordBox[] = NO_WORDS
-      const onWords = (read: readonly WordBox[]) => {
-        words = read
-      }
-      if (textLayerIsUsable(page.words)) {
-        const result = client.assembleFromWords(
-          page.words,
-          { width: page.width, height: page.height },
-          { onProgress, onWords },
-          controller.signal,
-          guide,
-        )
-        return { result, words }
-      }
-      const result = await client.run(page.imageData, { onProgress, onWords }, controller.signal, guide)
-      return { result, words }
-    },
-    [client],
-  )
+  /** The page on screen, drawn once the canvas it goes on is mounted. */
+  useEffect(() => {
+    const page = documentPages[currentPage]
+    const canvas = previewRef.current
+    if (!page || !canvas || !hasPreview) return
+    drawRef.current?.abort()
+    const controller = new AbortController()
+    drawRef.current = controller
+    drawPage(canvas, page.imageUrl, controller.signal)
+    return () => controller.abort()
+  }, [documentPages, currentPage, hasPreview])
 
-  /** Process a single ImageData through the OCR pipeline. */
-  const processImageData = useCallback(
-    async (imageData: ImageData, controller: AbortController): Promise<Reading> => {
-      setImageDimensions({ width: imageData.width, height: imageData.height })
-      setPreviewData(imageData)
-      setHasPreview(true)
+  const onFile = useCallback(async (file: File) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
 
-      if (previewRef.current) {
-        drawImageDataTo(previewRef.current, imageData)
-      }
+    const progress = (event: ProgressEvent) => setStages((prev) => reduceProgress(prev, event))
 
-      let words: readonly WordBox[] = NO_WORDS
-      const result = await client.run(
-        imageData,
-        {
-          onProgress: (event) => setStages((prev) => reduceProgress(prev, event)),
-          onWords: (read) => {
-            words = read
-          },
-        },
-        controller.signal,
-      )
-      return { result, words }
-    },
-    [client],
-  )
+    setFileName(file.name)
+    setPhase('running')
+    setStages({})
+    setPages(new Map())
+    setDroppedTables(new Set())
+    // The last file's picture must not stand in for this one while it loads.
+    setHasPreview(false)
+    setError(null)
+    setDocumentPages([])
+    setExtraTables([])
+    setCurrentPage(0)
+    setIsPdfMode(false)
 
-  /**
-   * Read pages first to last, while the first is already on screen.
-   *
-   * In order because a page that prints no header of its own is read by the
-   * columns of the page before it, and because the export is the whole
-   * document. A page that fails is noted and the rest are still read. `only`
-   * reads just those pages — the ones a cancel or a failure left — with the
-   * columns of the nearest page before each that was read.
-   */
-  const readPdfPages = useCallback(
-    async (
-      all: readonly PdfPage[],
-      controller: AbortController,
-      only?: readonly number[],
-      known: ReadonlyMap<number, PageRead> = new Map(),
-    ) => {
-      const read = new Map<number, OcrResult>([...known].map(([index, page]) => [index, page.result]))
-      const guideBefore = (index: number): ColumnGuide | null => {
-        for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
-          const found = read.get(earlier)
-          const guide = found && guideFrom(found)
-          if (guide) return guide
-        }
-        return null
-      }
-      // A reader that cannot start fails every scanned page the same way, and
-      // each try waits out its start-up; one try is enough to say so.
-      let readerDown: string | null = null
-      const fail = (index: number, error: unknown) =>
-        setPageErrors((prev) => new Map(prev).set(index, error instanceof Error ? error.message : String(error)))
-
-      for (const index of only ?? all.map((_, at) => at)) {
-        const page = all[index]
-        if (!page || controller.signal.aborted) break
-        setPdfProcessingPage(index)
-        setStages({})
-        if (!textLayerIsUsable(page.words)) {
-          if (readerDown) {
-            fail(index, readerDown)
-            continue
-          }
-          try {
-            await client.ready()
-          } catch (e) {
-            if (abortRef.current !== controller) return
-            readerDown = e instanceof Error ? e.message : String(e)
-            fail(index, e)
-            continue
-          }
-        }
-        try {
-          const next = await recognizePage(page, controller, guideBefore(index))
-          if (abortRef.current !== controller) return
-          read.set(index, next.result)
-          setPages((prev) => new Map(prev).set(index, freshRead(next)))
-        } catch (e) {
-          if (abortRef.current !== controller) return
-          if (e instanceof OcrCancelledError) break
-          fail(index, e)
-        }
-      }
+    progress({ stage: 'upload', status: 'start', message: 'sending the page to the reader…' })
+    const started = performance.now()
+    try {
+      const read = await readDocument(file, controller.signal)
       if (abortRef.current !== controller) return
-      setPdfProcessingPage(null)
-      setPhase(read.size > 0 ? 'done' : 'idle')
-    },
-    [client, recognizePage],
-  )
+      const elapsed = performance.now() - started
+      progress({ stage: 'upload', status: 'done', elapsedMs: elapsed })
+      progress({
+        stage: 'read',
+        status: 'done',
+        message: `${read.pages.length} page${read.pages.length === 1 ? '' : 's'}`,
+        elapsedMs: elapsed,
+      })
 
-  const onFile = useCallback(
-    async (file: File) => {
-      abortRef.current?.abort()
-      const controller = new AbortController()
-      abortRef.current = controller
-
-      setFileName(file.name)
-      setPhase(readerReady ? 'running' : 'booting')
-      setStages({})
-      setPages(new Map())
-      setPageErrors(new Map())
-      // The last file's picture must not stand in for this one while it loads.
-      setHasPreview(false)
-      setPreviewData(null)
-      setError(null)
-      setPdfPages([])
-      setCurrentPage(0)
-      setPdfProcessingPage(null)
-
-      if (isPdf(file)) {
-        setIsPdfMode(true)
-        try {
-          const all = await pdfToImages(file, 200)
-          if (abortRef.current !== controller) return
-          const first = all[0]
-          if (!first) throw new Error('PDF has no pages')
-          setPdfPages(all)
-          showPdfPage(first)
-          setPhase('running')
-          await readPdfPages(all, controller)
-        } catch (e) {
-          if (abortRef.current !== controller) return
-          setError(e instanceof Error ? e.message : String(e))
-          setPhase('error')
-        }
+      const first = read.pages[0]
+      if (!first) throw new ReaderError('The reader found no pages in that file.')
+      setDocumentPages(read.pages)
+      setExtraTables(read.extraTables)
+      setIsPdfMode(read.pages.length > 1 || file.type === 'application/pdf')
+      setPages(new Map(read.pages.map((page, index) => [index, freshRead(page)])))
+      const rows = read.pages.reduce((total, page) => total + page.result.rows.length, 0)
+      progress({ stage: 'rows', status: 'done', message: `${rows} rows` })
+      setImageDimensions(first.size)
+      setHasPreview(true)
+      setPhase('done')
+    } catch (e) {
+      if (abortRef.current !== controller) return
+      if (controller.signal.aborted) {
+        setPhase('idle')
         return
       }
-
-      setIsPdfMode(false)
-      try {
-        const loaded = await fileToImageData(file, options.maxInputSize)
-        const next = await processImageData(loaded.imageData, controller)
-        if (abortRef.current !== controller) return
-        setPages(new Map([[0, freshRead(next)]]))
-        setPhase('done')
-      } catch (e) {
-        if (abortRef.current !== controller) return
-        if (e instanceof OcrCancelledError) {
-          setPhase('idle')
-          return
-        }
-        setError(e instanceof Error ? e.message : String(e))
-        setPhase('error')
-      }
-    },
-    [readerReady, options.maxInputSize, processImageData, readPdfPages, showPdfPage],
-  )
+      progress({ stage: 'read', status: 'error' })
+      setError(e instanceof Error ? e.message : String(e))
+      setPhase('error')
+    }
+  }, [])
 
   // Edits belong to their page, so moving between pages keeps them and the
   // export carries every page's.
@@ -321,51 +208,42 @@ export function useReceiptSession(): ReceiptSession {
 
   const cancel = () => {
     abortRef.current?.abort()
-    setPdfProcessingPage(null)
     setPhase(pages.size > 0 ? 'done' : 'idle')
-  }
-
-  /** Pages a cancel or a failure left unread. Reading them again keeps every edit. */
-  const unread = isPdfMode ? pdfPages.flatMap((_, index) => (pages.has(index) ? [] : [index])) : []
-  const readRemaining = () => {
-    if (unread.length === 0) return
-    const controller = new AbortController()
-    abortRef.current = controller
-    setPageErrors((prev) => {
-      const next = new Map(prev)
-      for (const index of unread) next.delete(index)
-      return next
-    })
-    setError(null)
-    setPhase('running')
-    void readPdfPages(pdfPages, controller, unread, pages)
   }
 
   const clearCurrent = () => {
     abortRef.current?.abort()
+    drawRef.current?.abort()
     setPhase('idle')
     setPages(new Map())
-    setPageErrors(new Map())
+    setDroppedTables(new Set())
     setError(null)
     setHasPreview(false)
-    setPreviewData(null)
     setFileName(null)
     setImageDimensions(null)
-    setPdfPages([])
+    setDocumentPages([])
+    setExtraTables([])
     setIsPdfMode(false)
     setCurrentPage(0)
-    setPdfProcessingPage(null)
   }
 
-  /** Look at another PDF page. Its rows show as soon as they are read. */
+  /** Take an extra table out of the export, or put it back. */
+  const toggleTable = useCallback((key: string) => {
+    setDroppedTables((dropped) => {
+      const next = new Set(dropped)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [])
+
+  /** Look at another page. Every page is read before any is shown. */
   const switchPdfPage = useCallback(
     (pageIndex: number) => {
-      const page = pdfPages[pageIndex]
-      if (!page) return
+      if (!documentPages[pageIndex]) return
       setCurrentPage(pageIndex)
-      showPdfPage(page)
+      setImageDimensions(documentPages[pageIndex].size)
     },
-    [pdfPages, showPdfPage],
+    [documentPages],
   )
 
   const exportPages = useMemo(
@@ -376,27 +254,14 @@ export function useReceiptSession(): ReceiptSession {
     [pages],
   )
   const pageError = pageErrors.get(currentPage)
-  /**
-   * Pages the export has no rows for, for the skipped log: one whose read
-   * failed, and one reading never reached.
-   */
-  const failures = useMemo<PageFailure[]>(() => {
-    if (!isPdfMode) return []
-    return pdfPages.flatMap((_, index) =>
-      pages.has(index)
-        ? []
-        : [
-            {
-              page: index + 1,
-              message:
-                pageErrors.get(index) ??
-                (phase === 'running' || phase === 'booting'
-                  ? 'Not read yet.'
-                  : 'Reading stopped before this page.'),
-            },
-          ],
-    )
-  }, [isPdfMode, pdfPages, pages, pageErrors, phase])
+  /** Pages the export has no rows for. The reader reads them all, so this is rare. */
+  const failures = useMemo<PageFailure[]>(
+    () =>
+      documentPages.flatMap((_, index) =>
+        pages.has(index) ? [] : [{ page: index + 1, message: 'This page produced no rows.' }],
+      ),
+    [documentPages, pages],
+  )
   const tablePages = useMemo(
     () =>
       [...pages.entries()]
@@ -420,27 +285,27 @@ export function useReceiptSession(): ReceiptSession {
     hasPreview,
     fileName,
     imageDimensions,
-    pdfPages,
+    documentPages,
+    extraTables,
     currentPage,
     isPdfMode,
-    pdfProcessingPage,
     previewRef,
     result,
     edited,
     validated,
     words,
     busy,
-    unread,
     pageError,
     failures,
     exportPages,
     tablePages,
+    droppedTables,
+    toggleTable,
     onFile,
     onEditPage,
     validateAll,
     resetEdits,
     cancel,
-    readRemaining,
     clearCurrent,
     switchPdfPage,
   }

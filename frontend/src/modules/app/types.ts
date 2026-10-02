@@ -1,11 +1,9 @@
 import type { RefObject } from 'react'
 
 import type { StageMap } from '../../lib/stage-state'
-import type { WordBox } from '../../ocr/layout/rows'
-import type { PdfPage } from '../../lib/pdf-to-images'
-import type { OcrResult } from '../../ocr/types'
+import type { DocumentPage, ExportPage, ExtraTable, PageFailure } from '../../ocr/api'
+import type { OcrResult, WordBox } from '../../ocr/types'
 import type { PageRows } from '../../components/ResultView'
-import type { ExportPage, PageFailure } from '../../lib/export'
 
 export type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
 
@@ -54,10 +52,12 @@ export interface ReceiptSession {
   hasPreview: boolean
   fileName: string | null
   imageDimensions: { width: number; height: number } | null
-  pdfPages: PdfPage[]
+  /** Every page of the document, with where to fetch its picture. */
+  documentPages: DocumentPage[]
+  /** The tables printed under the pages' own, as the reader gathered them. */
+  extraTables: ExtraTable[]
   currentPage: number
   isPdfMode: boolean
-  pdfProcessingPage: number | null
   previewRef: RefObject<HTMLCanvasElement | null>
   result: OcrResult | null
   edited: ReadonlySet<number>
@@ -66,19 +66,21 @@ export interface ReceiptSession {
   /** The words the page on screen was read from, for the text overlay. */
   words: readonly WordBox[]
   busy: boolean
-  unread: number[]
   pageError: string | undefined
   /** Pages the export has no rows for, with why, for the skipped log. */
   failures: PageFailure[]
   exportPages: ExportPage[]
   tablePages: PageRows[]
+  /** Extra tables left out of the JSON export, by `ExtraTable.key`. */
+  droppedTables: ReadonlySet<string>
+  /** Take an extra table out of the JSON export, or put it back. */
+  toggleTable: (key: string) => void
   onFile: (file: File) => Promise<void>
   onEditPage: (pageIndex: number, rowIndex: number, cellIndex: number, value: string) => void
   /** Accept every row of the page on screen that is still waiting on a look. */
   validateAll: () => void
   resetEdits: () => void
   cancel: () => void
-  readRemaining: () => void
   clearCurrent: () => void
   switchPdfPage: (pageIndex: number) => void
 }

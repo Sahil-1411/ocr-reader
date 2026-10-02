@@ -1,9 +1,9 @@
 import { Fragment, useMemo, useState } from 'react'
 
-import { extraTables, toTableCsv, type ExportPage } from '../lib/export'
+import { requestExport, type ExportPage, type ExtraTable } from '../ocr/api'
 import { exportBaseName, saveFile } from '../lib/download'
 import { DownloadIcon } from './ExportButtons'
-import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
+import { rowCells, toPublicJson } from '../ocr/result'
 import {
   REVIEW_THRESHOLD,
   rowViews,
@@ -439,12 +439,18 @@ function isNumericHeader(header: string): boolean {
 interface ExtraTablesProps {
   /** Every page read so far, in page order. */
   pages: readonly ExportPage[]
+  /** The tables printed under the pages' own, as the reader gathered them. */
+  tables: readonly ExtraTable[]
   /** Pages in the document: 1 for an image. */
   total: number
   /** Index of the page on screen within the document. */
   currentPage: number
   /** The uploaded file's name, for the downloads. */
   fileName: string | null
+  /** Tables left out of the JSON export, by `ExtraTable.key`. */
+  dropped: ReadonlySet<string>
+  /** Take a table out of the JSON export, or put it back. */
+  onToggleTable: (key: string) => void
 }
 
 /**
@@ -456,8 +462,15 @@ interface ExtraTablesProps {
  * download is the whole document's, since a table repeated on every page is
  * one table to whoever reads the file.
  */
-export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTablesProps) {
-  const tables = useMemo(() => extraTables(pages), [pages])
+export function ExtraTables({
+  pages,
+  tables,
+  total,
+  currentPage,
+  fileName,
+  dropped,
+  onToggleTable,
+}: ExtraTablesProps) {
   const page = currentPage + 1
   const onPage = useMemo(
     () =>
@@ -471,8 +484,10 @@ export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTables
 
   return (
     <>
-      {onPage.map(({ table, rows }) => (
-        <div className="card" key={`${table.slug}-${table.headers.join('|')}`}>
+      {onPage.map(({ table, rows }) => {
+        const out = dropped.has(table.key)
+        return (
+        <div className={`card${out ? ' card--dropped' : ''}`} key={table.key}>
           <div className="card__head">
             <div className="export-title-group">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -487,19 +502,31 @@ export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTables
                     carries all of them, so say how many. */}
                 {table.rows.length > rows.length ? ` · ${table.rows.length} in all` : ''}
               </span>
+              {out && (
+                <span className="dropped-chip" title="This table is left out of the JSON export">
+                  Not in JSON
+                </span>
+              )}
             </div>
             <div className="btn-row">
+              {/* The downloads are this table on its own, and stay whatever
+                  the export carries: taking a table out of the document is
+                  not a reason to stop being able to save it. */}
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() =>
-                  saveFile(
+                onClick={() => {
+                  void requestExport({
+                    what: 'table',
+                    format: 'csv',
+                    key: table.key,
+                    pages,
+                    total,
+                  }).then((text) =>
                     // The byte-order mark tells Excel the file is UTF-8.
-                    `﻿${toTableCsv(table, total)}`,
-                    'text/csv;charset=utf-8;',
-                    `${base}-${table.slug}.csv`,
+                    saveFile(`﻿${text}`, 'text/csv;charset=utf-8;', `${base}-${table.slug}.csv`),
                   )
-                }
+                }}
                 title={
                   table.rows.length > rows.length
                     ? `Download ${table.title} from every page as a CSV spreadsheet`
@@ -508,6 +535,58 @@ export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTables
               >
                 <DownloadIcon />
                 CSV
+              </button>
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => {
+                  void requestExport({
+                    what: 'table',
+                    format: 'json',
+                    key: table.key,
+                    pages,
+                    total,
+                  }).then((text) =>
+                    saveFile(`${text}\n`, 'application/json', `${base}-${table.slug}.json`),
+                  )
+                }}
+                title={
+                  table.rows.length > rows.length
+                    ? `Download ${table.title} from every page as JSON`
+                    : `Download ${table.title} as JSON`
+                }
+              >
+                <DownloadIcon />
+                JSON
+              </button>
+              <button
+                type="button"
+                className={`btn btn--sm${out ? '' : ' btn--subtle'}`}
+                onClick={() => onToggleTable(table.key)}
+                aria-pressed={out}
+                title={
+                  out
+                    ? `Put ${table.title} back into the JSON export`
+                    : `Leave ${table.title} out of the JSON export`
+                }
+              >
+                {out ? (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <polyline points="1 4 1 10 7 10" />
+                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                    </svg>
+                    Restore
+                  </>
+                ) : (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                    Remove
+                  </>
+                )}
               </button>
             </div>
           </div>
@@ -538,7 +617,8 @@ export function ExtraTables({ pages, total, currentPage, fileName }: ExtraTables
             </div>
           </div>
         </div>
-      ))}
+        )
+      })}
     </>
   )
 }

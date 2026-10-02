@@ -10,10 +10,11 @@ export default function App() {
       {session.exportPages.length > 0 ? (
         <ExportDock
           pages={session.exportPages}
-          total={session.isPdfMode ? session.pdfPages.length : 1}
+          total={session.isPdfMode ? session.documentPages.length : 1}
           failures={session.failures}
           reading={session.busy}
           fileName={session.fileName}
+          droppedTables={session.droppedTables}
         />
       ) : (
         <div className="app__top">

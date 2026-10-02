@@ -13,19 +13,16 @@ export function TicketPanel({ session }: { session: ReceiptSession }) {
     hasPreview,
     fileName,
     imageDimensions,
-    pdfPages,
+    documentPages,
     currentPage,
     isPdfMode,
-    pdfProcessingPage,
     previewRef,
     words,
     result,
     busy,
-    unread,
     pageError,
     onFile,
     cancel,
-    readRemaining,
     clearCurrent,
     switchPdfPage,
   } = session
@@ -34,7 +31,6 @@ export function TicketPanel({ session }: { session: ReceiptSession }) {
   const stateOf = (index: number): PageState => {
     if (pages.has(index)) return 'read'
     if (pageErrors.has(index)) return 'failed'
-    if (pdfProcessingPage === index) return 'reading'
     return 'pending'
   }
 
@@ -46,7 +42,7 @@ export function TicketPanel({ session }: { session: ReceiptSession }) {
         size={imageDimensions}
         hasPreview={hasPreview}
         fileName={fileName}
-        pages={isPdfMode ? pdfPages : []}
+        pages={isPdfMode ? documentPages : []}
         currentPage={currentPage}
         onSwitchPage={switchPdfPage}
         stateOf={stateOf}
@@ -75,9 +71,9 @@ export function TicketPanel({ session }: { session: ReceiptSession }) {
               <div className="preview-meta">
                 <span className="preview-meta__filename" title={fileName ?? 'Receipt'}>
                   {fileName ?? 'Receipt'}
-                  {isPdfMode && pdfPages.length > 0 && (
+                  {isPdfMode && documentPages.length > 0 && (
                     <span className="preview-meta__page-badge">
-                      PDF · {pdfPages.length} page{pdfPages.length > 1 ? 's' : ''}
+                      PDF · {documentPages.length} page{documentPages.length > 1 ? 's' : ''}
                     </span>
                   )}
                 </span>
@@ -89,23 +85,10 @@ export function TicketPanel({ session }: { session: ReceiptSession }) {
               </div>
             )}
 
-            {busy && isPdfMode && pdfProcessingPage !== null && (
-              <p className="reading-note" aria-live="polite">
-                Reading page {pdfProcessingPage + 1} of {pdfPages.length}…
-                {result ? ' Export waits until every page is read.' : ''}
-              </p>
-            )}
+            {/* The reader reads the whole document in one call, so there is
+                no part-read state to report: either it is reading or it is
+                done. */}
             {busy && !result && !pageError && <StageProgress stages={stages} />}
-            {!busy && unread.length > 0 && (
-              <div className="reading-note reading-note--action">
-                <span>
-                  {unread.length} of {pdfPages.length} pages not read, so the export leaves them out.
-                </span>
-                <button type="button" className="btn btn--sm" onClick={readRemaining}>
-                  Read remaining pages
-                </button>
-              </div>
-            )}
 
             {(error ?? pageError) && (
               <div className="banner banner--err" role="alert">

@@ -1,8 +1,7 @@
 """
 Join the glyphs a recogniser returned one at a time.
 
-A port of `frontend/src/ocr/layout/glyphs.ts`; the reasoning is written out
-there and not repeated here. In short: a reader is free to box each glyph
+Why this is needed: a recogniser is free to box each glyph
 separately, and on a line-printer face it usually does — `144732` comes back
 as `1 4 4 7 3 2`. Everything downstream reads the layout from where words
 start and the gaps between them, so a word cut into six pieces is six column

@@ -14,12 +14,10 @@ recovers. There is no such problem here.
 
 What this deliberately does NOT do
 ----------------------------------
-Assemble rows. `frontend/src/ocr/layout/rows.ts` already does that, it is tested, and a
-second implementation would drift from it. This emits the same `WordBox` shape
-the TypeScript reader emits, so `frontend/tools/score.test.ts` can feed it straight into
-the real row builders. That also keeps the comparison honest: both readers are
-scored through identical downstream code, so a difference in the score is a
-difference in reading.
+Assemble rows. It stops at word boxes; `python/reader/` takes them from there —
+glyphs joined, columns found, rows built, the receipt's own checks run. Keeping
+the recogniser at the boundary means a PDF's own text and a scan's words enter
+the same builders, and only the recognising is paid for when a page needs it.
 
 Usage
 -----
@@ -42,10 +40,10 @@ import numpy as np
 # Watermark suppression                                                        #
 # --------------------------------------------------------------------------- #
 #
-# A faithful port of `src/ocr/receipt/color-watermark.ts`. The constants there
-# were tuned against these exact receipts and measured against ground truth, so
-# they are copied rather than re-derived; changing one here without changing it
-# there makes the two readers incomparable.
+# These constants were tuned against these exact receipts and measured against
+# ground truth, not derived from anything. The numbers in `## Measured` in
+# python/README.md were read with these; change one and those stop describing
+# this reader.
 
 PAPER = 128
 RED_CHROMA = 45

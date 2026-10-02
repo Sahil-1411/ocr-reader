@@ -1,20 +1,23 @@
-# Offline reader + scoring
+# The recogniser
 
-A Python reader that uses PP-OCR instead of Tesseract, and a scorer that measures
-either reader against what the receipts actually say.
+PP-OCR, which reads the pages a PDF has no text for. `serve.py` imports it;
+`read_receipt.py` also runs from the command line to dump word boxes for one
+image.
 
-## Why it is out here rather than in the app
+This is the recogniser only. Everything built on top of the words — columns,
+rows, the receipt's own checks, the export — is `python/reader/`. See
+[`docs/how-python-and-frontend-work.md`](../docs/how-python-and-frontend-work.md).
 
-The browser app reads with Tesseract. Its remaining mistakes are all
-character-level and all in places the watermark has thinned the print — `/` read
-as `1` in a settled date, `8` as `6` in an amount, `L/T` as `LIT`. A model
-trained on photographs rather than scans is less prone to exactly that, which is
-what makes PP-OCR worth trying.
+## Why a server rather than the browser
 
-Running PP-OCR in the browser was tried and removed: its ONNX stages need
-OpenCV, and `@techstark/opencv-js` takes minutes to initialise its 10 MB
-synchronous WASM build, wedging the main thread while it does. Outside the
-browser there is no such issue, so the app posts the image to `serve.py` instead.
+PP-OCR cannot run in the browser: its ONNX stages need OpenCV, and
+`@techstark/opencv-js` takes minutes to initialise its 10 MB synchronous WASM
+build, wedging the main thread while it does. Outside the browser there is no
+such issue, so the app posts the file to `serve.py` instead.
+
+Tesseract used to read in the browser as a fallback. It was removed when the
+reader moved to Python: there is one reader now, and the app says so rather
+than quietly reading less accurately.
 
 ## Setup
 
@@ -60,24 +63,13 @@ outside it.
 ## Use
 
 ```sh
-mkdir -p frontend/tools/out
-
 .venv/bin/python python/read_receipt.py frontend/public/samples/weekly-invoice.jpg \
-  > frontend/tools/out/weekly-invoice.jpg.words.json
-
-pnpm --dir frontend exec vitest run tools/score.test.ts
+  > /tmp/weekly-invoice.words.json
 ```
 
-All three at once:
-
-```sh
-mkdir -p frontend/tools/out
-for s in frontend/public/samples/*.jpg; do
-  .venv/bin/python python/read_receipt.py "$s" --scales 1 2 \
-    > "frontend/tools/out/$(basename "$s").words.json"
-done
-pnpm --dir frontend exec vitest run tools/score.test.ts
-```
+Word boxes on stdout, for looking at what the recogniser saw. To check a whole
+reading rather than the words, put the document in `frontend/tools/corpus/` and
+run `pnpm corpus`.
 
 Useful flags:
 
@@ -89,8 +81,12 @@ Useful flags:
 
 ## Measured
 
-Against `fixtures/ground-truth.json`, PP-OCR at the default 2× versus the
-Tesseract reader in the app:
+PP-OCR at the default 2× versus the Tesseract reader the app used before the
+reader moved to Python, scored against a transcription of the three sample
+receipts. The scorer was `frontend/tools/score.test.ts` and it went with the
+TypeScript readers, so these numbers cannot be reproduced from the repo as it
+stands; they are kept because they are why PP-OCR is the recogniser. Its
+fixture is gitignored (see **Privacy**), so it is not here either.
 
 | | Tesseract | PP-OCR |
 | --- | --- | --- |
@@ -126,8 +122,8 @@ about spaces.
 **Ensembling has to merge rows, not words.** Pooling two passes' words is the
 obvious approach and destroys the result — every line appears twice at slightly
 different coordinates and the builders pair a label from one pass with an amount
-from the other. The invoice went from 40 correct rows to 3. `score.test.ts`
-assembles each pass separately and merges the finished rows on their natural
+from the other. The invoice went from 40 correct rows to 3. The scorer
+assembled each pass separately and merged the finished rows on their natural
 key.
 
 ## Serving the reader to the app
@@ -146,29 +142,28 @@ otherwise costs about 25 seconds on the first receipt.
 
 Reads run one at a time. ONNX Runtime already spreads one read over every
 core, so two at once would only make both slower and double the memory. Up to
-8 reads wait in line (the one being read included); past that `/read` answers
-503 and the page can be read again.
+8 reads wait in line (the one being read included); past that `/document`
+answers 503 and the file can be sent again.
 
 ```
-browser: image → PNG → POST /read
-python:  decode → watermark suppression → PP-OCR → word boxes
-browser: rows.ts → validation → JSON
+browser: the file → POST /document
+python:  a PDF's text layer, or watermark suppression → PP-OCR → word boxes
+         → glyphs joined → columns → rows → the receipt's own checks
+browser: draws the rows
 ```
 
 Standard library only — no Flask, no FastAPI. It binds to `127.0.0.1` unless
-you pass `--live`, which serves `frontend/dist` and `/read` on `0.0.0.0:8080`.
+you pass `--live`, which serves `frontend/dist` and the reader's routes on
+`0.0.0.0:8080`.
 A browser `Origin` is accepted when it is a dev server, the same host as this
 process, or listed with `--origin`. It writes nothing to disk.
 
 To put the site on a server, see the root README.
 
-Python does its own watermark suppression, so the app skips its pass when this
-reader is in use rather than running every stroke through the ink ramp twice.
-
-When the server is not running the app says so through `onFatal` and reads with
-Tesseract instead of refusing the image. It reports the backend as
-`tesseract (Python reader not running)` — the two readers do not produce the same
-answer, so a silent downgrade would be indistinguishable from success.
+When the server is not running the app says so and reads nothing. There is no
+second reader to fall back to, and that is deliberate: two readers do not
+produce the same answer, so a silent downgrade would be indistinguishable from
+success.
 
 Already running? It says so and exits 0 rather than throwing a bind traceback:
 
@@ -176,16 +171,23 @@ Already running? It says so and exits 0 rather than throwing a bind traceback:
 lsof -ti tcp:8756 | xargs kill   # stop it
 ```
 
-## How the scoring works
+## How the scoring worked
 
-`read_receipt.py` deliberately stops at word boxes. Row assembly stays in
-`frontend/src/ocr/layout/rows.ts`, which is tested and which a second implementation would
-only drift from. `score.test.ts` feeds the Python words through those same
-builders, so both readers are scored through identical downstream code and a
-difference in the score is a difference in *reading*.
+`read_receipt.py` stops at word boxes; everything above them is
+`python/reader/`. While the readers were still TypeScript, `score.test.ts` fed
+the Python words through the same row builders the browser used, so both
+recognisers were scored through identical downstream code and a difference in
+the score was a difference in *reading*.
 
-`fixtures/ground-truth.json` is what the three sample receipts actually say,
-transcribed by eye.
+That scorer went with the TypeScript readers. What replaced it is
+`pnpm corpus`, which compares a whole document's reading against the last one
+recorded — a wider net, since it covers the columns and the checks as well as
+the words.
+
+The scorer read `frontend/tools/fixtures/ground-truth.json`: what the three
+sample receipts actually say, transcribed by eye. It is gitignored along with
+the receipts themselves, so a clone has an empty file there and the path is a
+note of what to put back rather than something to open.
 
 This scoring is not ceremony. Raising the ink ramp from `t²` to `t³` fixed
 `FWD BALANCE` and `ON-LINE NET DUE`, looked like a clear win on the rows anyone
@@ -211,8 +213,8 @@ alone:
 
 - **Algebra.** The `TOTALS` row states each column's sum. With exactly one
   unreadable value in a column it is solved rather than guessed:
-  `missing = total − sum(readable)`. `solveInventoryCounts` in
-  `frontend/src/ocr/receipt/validate.ts` does this and reports each fill as
+  `missing = total − sum(readable)`. `solve_inventory_counts` in
+  `python/reader/validate.py` does this and reports each fill as
   `inventory-solved`; counts it cannot solve stay empty under `inventory-unread`.
 - **Targeted re-read.** Crop a failing row at high resolution and read it again
   with a digits-only charset. Cheap: it is a handful of rows, not the page.

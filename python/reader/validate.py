@@ -1,8 +1,7 @@
 """
 Check a reading against the receipt's own arithmetic.
 
-A port of `frontend/src/ocr/receipt/validate.ts`; the argument for why these
-checks exist at all is written out there. In short: what matters for a
+Why these checks exist at all: what matters for a
 financial document is not a headline accuracy number but whether the reading
 can say *which* rows it got wrong, and these receipts restate their own
 contents — a totals row, a footer count, a section subtotal repeated in the

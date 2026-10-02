@@ -2,14 +2,13 @@
 Read a multi-column table (a wholesale invoice, a price list) by lining words
 up under the printed header.
 
-A port of `frontend/src/ocr/layout/columns.ts`. The reasoning behind each rule
-is written out there, at the rule it belongs to, and is not repeated here;
-what is repeated is the arithmetic, because the readings have to agree. Where
-that file compares a ratio, this compares the same ratio against the same
-constant, and where it sorts, this sorts the same way.
+Every rule here is argued for at the rule itself, below. This file is the only
+reader: nothing defers to a second copy, and a threshold changed here changes
+what the app, a script and the export all see.
 
-Two differences between the languages are worth naming, because both would
-change a reading if they were let through:
+It started as a port of a TypeScript reader, and two differences between the
+languages are still worth naming, because either would change a reading if it
+were let through:
 
 * `Math.min()` over nothing is `Infinity` in JavaScript and an error in
   Python, so the spreads here say what they mean with an explicit default.
@@ -47,6 +46,10 @@ class SkippedLine:
     text: str
     confidence: float
     y: float
+    #: Left edge of the printed line, in the same pixel space as the words.
+    #: Where a document sets its annotations apart by indenting them, this is
+    #: what says so — see `skipped.refine`.
+    x: float = 0.0
 
 
 @dataclass(slots=True)
@@ -57,6 +60,10 @@ class ColumnTable:
     bounds: list[float]
     #: Printed lines the reader left out, and notes it cut, in printed order.
     skipped: list[SkippedLine]
+    #: Left edge of the lines that became rows. `bounds[0]` is the page's own
+    #: edge, so it cannot say where the items start; this can, and `skipped`
+    #: is judged against it.
+    body_left: float = 0.0
     #: The heading printed over this table, when it has one of its own.
     title: str | None = None
 
@@ -1441,12 +1448,17 @@ def read_column_tables(
 
         rows: list[TableRow] = []
         skipped: list[SkippedLine] = []
+        row_lefts: list[float] = []
 
-        def log(reason: str, cells: Sequence[str], confidence: float, y: float) -> None:
+        def log(
+            reason: str, cells: Sequence[str], confidence: float, y: float, x: float = 0.0
+        ) -> None:
             text = "  ".join(cell.strip() for cell in cells if cell.strip())
             if not text:
                 return
-            skipped.append(SkippedLine(reason=reason, text=text, confidence=confidence, y=y))
+            skipped.append(
+                SkippedLine(reason=reason, text=text, confidence=confidence, y=y, x=x)
+            )
 
         previous_band = None
         lead_in: dict | None = None
@@ -1454,7 +1466,13 @@ def read_column_tables(
         def drop_lead_in() -> None:
             nonlocal lead_in
             if lead_in is not None:
-                log("unplaced", lead_in["cells"], lead_in["confidence"], lead_in["band"].top)
+                log(
+                    "unplaced",
+                    lead_in["cells"],
+                    lead_in["confidence"],
+                    lead_in["band"].top,
+                    lead_in["x"],
+                )
             lead_in = None
 
         for line in body:
@@ -1464,21 +1482,22 @@ def read_column_tables(
             cells = read_cells
             confidence = mean_confidence(line)
             top = line_band(line).top
+            left = min((word.x for word in line), default=0.0)
             for note in notes:
-                log("note", [note], confidence, top)
+                log("note", [note], confidence, top, left)
             item = is_line_item(cells)
             if not item and is_furniture(cells):
-                log("furniture", cells, confidence, top)
+                log("furniture", cells, confidence, top, left)
                 continue
             if is_rule(cells):
                 continue
             if is_repeated_header(cells, columns):
-                log("repeated-header", cells, confidence, top)
+                log("repeated-header", cells, confidence, top, left)
                 continue
             if not any(cell.strip() for cell in cells):
                 continue
             if is_summary(cells, item):
-                log("summary", cells, confidence, top)
+                log("summary", cells, confidence, top, left)
                 previous_band = None
                 drop_lead_in()
                 continue
@@ -1503,7 +1522,7 @@ def read_column_tables(
                     if placed == "text" and any(re.search(r"[A-Za-z]", c) for c in text_cells):
                         rows.append(TableRow(cells=text_cells, confidence=confidence, label=True))
                     else:
-                        log("unplaced", text_cells, confidence, top)
+                        log("unplaced", text_cells, confidence, top, left)
                     drop_lead_in()
                     previous_band = None
                     continue
@@ -1523,13 +1542,19 @@ def read_column_tables(
                             "cells": combine_cells(lead_in["cells"], text_cells),
                             "band": type(band)(lead_in["band"].top, band.bottom),
                             "confidence": min(lead_in["confidence"], confidence),
+                            "x": min(lead_in["x"], left),
                         }
                     else:
                         drop_lead_in()
-                        lead_in = {"cells": text_cells, "band": band, "confidence": confidence}
+                        lead_in = {
+                            "cells": text_cells,
+                            "band": band,
+                            "confidence": confidence,
+                            "x": left,
+                        }
                     continue
                 # The legal footer, a notes block, a banner.
-                log("unplaced", text_cells, confidence, top)
+                log("unplaced", text_cells, confidence, top, left)
                 drop_lead_in()
                 continue
 
@@ -1539,6 +1564,7 @@ def read_column_tables(
                 lead_in = None
             drop_lead_in()
             rows.append(TableRow(cells=cells, confidence=confidence))
+            row_lefts.append(left)
             previous_band = band
 
         drop_lead_in()
@@ -1548,6 +1574,9 @@ def read_column_tables(
             rows=rows,
             bounds=list(bounds),
             skipped=skipped,
+            # The median, not the smallest: one row whose first column was
+            # misread to the left would otherwise move the whole edge.
+            body_left=median(row_lefts) if row_lefts else 0.0,
         )
 
     def priced(table: ColumnTable) -> bool:

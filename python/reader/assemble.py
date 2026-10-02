@@ -2,8 +2,8 @@
 Pair words into the receipt reading: which kind of page this is, its rows, its
 headers and its checks.
 
-A port of `frontend/src/ocr/receipt/assemble.ts`. No image work lives here, so
-the same builders serve the text layer and the recogniser.
+No image work lives here, so the same builders serve a PDF's own text and the
+recogniser's words alike.
 """
 
 from __future__ import annotations
@@ -55,6 +55,10 @@ class OcrResult:
     skipped: list[Any]
     warnings: list[str] = field(default_factory=list)
     word_count: int = 0
+    #: Left edge of the rows the page's table was read from, where it has one.
+    #: `column_bounds[0]` is the page's own edge and says nothing about where
+    #: the items start; this does, and `skipped.refine` judges against it.
+    body_left: float | None = None
 
 
 def clean_title(raw: str) -> str:
@@ -504,6 +508,7 @@ def assemble_receipt(
         if kind == "table"
         else [],
         column_bounds=list(table.bounds) if (kind == "table" and table is not None) else None,
+        body_left=table.body_left if (kind == "table" and table is not None) else None,
         validation=validation,
         # Only the column reader keeps a log.
         skipped=sorted(

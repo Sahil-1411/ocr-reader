@@ -43,6 +43,43 @@ SKIP_REASONS: tuple[dict, ...] = (
         "check": True,
     },
     {
+        "reason": "annotation",
+        "what": "Printed apart from the items",
+        "detail": (
+            "The document indents these away from its item lines — a category "
+            "band, a note on the item above it, or a field of the page. Not an "
+            "item, by the document's own layout."
+        ),
+        "check": False,
+    },
+    {
+        "reason": "page-field",
+        "what": "Printed on more than one page",
+        "detail": (
+            "The same words on page after page: an order number, a stamp, a "
+            "standing note. A field of the page rather than a row of the table."
+        ),
+        "check": False,
+    },
+    {
+        "reason": "legend",
+        "what": "A key to the document's own marks",
+        "detail": (
+            "Explains what a symbol on the page means, such as what * marks or "
+            "what the temperature letters stand for."
+        ),
+        "check": False,
+    },
+    {
+        "reason": "margin",
+        "what": "Printed outside the table",
+        "detail": (
+            "Set further left than any item, in the page margin: a stamp, a "
+            "watermark, the line a PDF writer leaves behind."
+        ),
+        "check": False,
+    },
+    {
         "reason": "note",
         "what": "Note cut from an item",
         "detail": (

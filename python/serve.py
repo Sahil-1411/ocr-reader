@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
 """
-Serve the PP-OCR reader to the browser app.
+Serve the reader to the browser app.
 
-The app reads receipts in the browser with Tesseract. PP-OCR reads them more
-accurately — measured against `fixtures/ground-truth.json`, all 48 inventory
-count rows exact against 40, and 41 invoice rows against 38 — but it cannot run in the
-browser: the ONNX stages need OpenCV, and OpenCV.js wedges the main thread for
-minutes on its 10 MB synchronous WASM init. This puts the reader where it works
-and hands the words back.
+The reading itself is `python/reader/`; this is the door to it. Three routes,
+and the first is the only one that takes a file:
+
+    POST /document    a PDF or an image — the server tells which by looking —
+                      and back comes every page's reading. `?format=csv` or
+                      `?format=json` returns the finished export instead, for a
+                      caller that has nothing to edit.
+    POST /export      the pages a caller holds, back as one CSV or JSON. Posted
+                      rather than re-read because the app may have had a cell
+                      typed into it or a table taken out.
+    GET  /page        the picture of one page of a PDF just read, at the width
+                      asked for. A PDF's pages are pixels only this side has;
+                      an uploaded image is its own picture and is never asked
+                      for back.
+
+One upload route, not one per file type: what a file is, is in the file. The
+app should not have to decide, and a caller that guesses wrong should not get a
+different answer.
 
 Standard library only, deliberately. A framework would be one more thing to
-install for what is a single endpoint.
+install for what is three endpoints.
 
     .venv/bin/python python/serve.py --warm          # dev, 127.0.0.1:8756
     .venv/bin/python python/serve.py --live --warm   # public, serves frontend/dist
@@ -155,14 +167,6 @@ def engine():
     return _engine
 
 
-def decode_image(raw: bytes) -> np.ndarray:
-    """Bytes to an RGB array, via Pillow so any format the browser sends works."""
-    from PIL import Image
-
-    with Image.open(io.BytesIO(raw)) as image:
-        return np.asarray(image.convert("RGB"))
-
-
 class Server(ThreadingHTTPServer):
     # A restart should be able to bind the port while the previous socket is
     # still in TIME_WAIT, and a stop should not wait on a stuck read.
@@ -291,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(403, {"error": "origin not allowed"}, origin)
             return
         route = urlparse(self.path).path
-        if route not in ("/read", "/document", "/export"):
+        if route not in ("/document", "/export"):
             self._send(404, {"error": "not found"}, origin)
             return
 
@@ -304,7 +308,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": "empty body"}, origin)
             return
         if length > MAX_UPLOAD_BYTES:
-            self._send(413, {"error": "image too large"}, origin)
+            self._send(413, {"error": "file too large"}, origin)
             return
 
         # Read the body even when the answer is "busy": replying with the upload
@@ -323,41 +327,10 @@ class Handler(BaseHTTPRequestHandler):
             self._write_export(raw, origin)
             return
 
-        if route == "/document":
-            try:
-                self._read_document(raw, origin, urlparse(self.path).query)
-            finally:
-                _pending_reads.release()
-            return
-
         try:
-            arrived = time.perf_counter()
-            with _read_lock:
-                started = time.perf_counter()
-                rgb = decode_image(raw)
-                page, ratio = suppress_colored_watermark(rgb)
-                words = read_words(engine(), page, scale=2.0)
-                finished = time.perf_counter()
-        except Exception as error:  # noqa: BLE001 - report, never crash the server
-            self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
-            return
+            self._read_document(raw, origin, urlparse(self.path).query)
         finally:
             _pending_reads.release()
-
-        elapsed = round((finished - started) * 1000)
-        waited = round((started - arrived) * 1000)
-        queued = f" after {waited}ms in the queue" if waited else ""
-        print(f"read {page.shape[1]}x{page.shape[0]} -> {len(words)} words in {elapsed}ms{queued}", flush=True)
-        self._send(
-            200,
-            {
-                "words": words,
-                "size": {"width": int(page.shape[1]), "height": int(page.shape[0])},
-                "watermarkPixelRatio": round(ratio, 4),
-                "elapsedMs": elapsed,
-            },
-            origin,
-        )
 
 
     def _write_export(self, raw: bytes, origin: str | None) -> None:
@@ -636,7 +609,7 @@ def main() -> int:
         engine()
 
     shown = "127.0.0.1" if host == "0.0.0.0" else host
-    print(f"reader listening on http://{shown}:{port}  (POST /read)", flush=True)
+    print(f"reader listening on http://{shown}:{port}  (POST /document)", flush=True)
     if _static_root is not None:
         print(f"frontend from {_static_root}", flush=True)
     if host == "0.0.0.0":

@@ -69,6 +69,8 @@ export function useReceiptSession(): ReceiptSession {
   const previewRef = useRef<HTMLCanvasElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const drawRef = useRef<AbortController | null>(null)
+  // What the last reading held for its pictures, freed when it is replaced.
+  const releaseRef = useRef<(() => void) | null>(null)
 
   const current = pages.get(currentPage)
   const result = current?.result ?? null
@@ -107,6 +109,8 @@ export function useReceiptSession(): ReceiptSession {
 
     const progress = (event: ProgressEvent) => setStages((prev) => reduceProgress(prev, event))
 
+    releaseRef.current?.()
+    releaseRef.current = null
     setFileName(file.name)
     setPhase('running')
     setStages({})
@@ -136,6 +140,7 @@ export function useReceiptSession(): ReceiptSession {
 
       const first = read.pages[0]
       if (!first) throw new ReaderError('The reader found no pages in that file.')
+      releaseRef.current = read.release
       setDocumentPages(read.pages)
       setExtraTables(read.extraTables)
       setIsPdfMode(read.pages.length > 1 || file.type === 'application/pdf')
@@ -214,6 +219,8 @@ export function useReceiptSession(): ReceiptSession {
   const clearCurrent = () => {
     abortRef.current?.abort()
     drawRef.current?.abort()
+    releaseRef.current?.()
+    releaseRef.current = null
     setPhase('idle')
     setPages(new Map())
     setDroppedTables(new Set())

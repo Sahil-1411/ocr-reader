@@ -6,7 +6,6 @@ import { defineConfig } from 'vite'
 // Vite, so every one of the reader's paths is forwarded to python/serve.py.
 const pythonReader = {
   '/health': 'http://127.0.0.1:8756',
-  '/read': 'http://127.0.0.1:8756',
   '/document': 'http://127.0.0.1:8756',
   '/page': 'http://127.0.0.1:8756',
   '/export': 'http://127.0.0.1:8756',

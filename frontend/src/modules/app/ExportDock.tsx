@@ -34,17 +34,29 @@ interface ExportDockProps {
   reading: boolean
   /** The uploaded file's name, for the downloads. */
   fileName: string | null
+  /** Extra tables the reader has left out of the JSON, by `ExtraTable.key`. */
+  droppedTables: ReadonlySet<string>
 }
 
 /** Which panel the bar has open below it. One at a time: both read the same page. */
 type Panel = 'json' | 'log' | null
 
-export function ExportDock({ pages, total, failures, reading, fileName }: ExportDockProps) {
+export function ExportDock({
+  pages,
+  total,
+  failures,
+  reading,
+  fileName,
+  droppedTables,
+}: ExportDockProps) {
   const [panel, setPanel] = useState<Panel>(null)
   const toggle = (next: Exclude<Panel, null>) =>
     setPanel((open) => (open === next ? null : next))
 
-  const publicData = useMemo(() => toDocumentJson(pages, total), [pages, total])
+  const publicData = useMemo(
+    () => toDocumentJson(pages, total, droppedTables),
+    [pages, total, droppedTables],
+  )
   const json = useMemo(() => JSON.stringify(publicData, null, 2), [publicData])
   const rowCount = publicData?.rows.length ?? 0
   const exportReady = !reading && pages.length > 0

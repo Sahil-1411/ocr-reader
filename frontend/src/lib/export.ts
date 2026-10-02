@@ -48,25 +48,20 @@ export type ExportJson = ReturnType<typeof toPublicJson> | DocumentJson
  * The document's rows as JSON: the page's own shape for a one-page
  * document, one table for a longer one — however many of its pages were read.
  */
-export function toDocumentJson(pages: readonly ExportPage[], total: number): ExportJson | null {
+export function toDocumentJson(
+  pages: readonly ExportPage[],
+  total: number,
+  /**
+   * Extra tables to leave out, by `ExtraTable.key`. A page can print a recap
+   * or a tax summary under its own table, and whether that belongs in the
+   * export is the reader's judgement, not something the geometry can settle.
+   */
+  dropped?: ReadonlySet<string>,
+): ExportJson | null {
   const [first] = pages
   if (!first) return null
-  const extras = extraTables(pages)
-  const tables =
-    extras.length > 0
-      ? {
-          tables: extras.map((table) => ({
-            title: table.title,
-            headers: [...table.headers],
-            rows: table.rows.map((row) => ({
-              ...(total > 1 ? { page: row.page } : {}),
-              ...Object.fromEntries(
-                table.headers.map((header, index) => [header, row.cells[index] ?? '']),
-              ),
-            })),
-          })),
-        }
-      : {}
+  const extras = extraTables(pages).filter((table) => !dropped?.has(table.key))
+  const tables = extras.length > 0 ? { tables: extras.map((table) => toTableJson(table, total)) } : {}
   if (total <= 1) return { ...toPublicJson(first.result), ...tables }
 
   const layout = documentLayout(pages)
@@ -312,6 +307,14 @@ export interface ExtraTable {
   title: string
   /** That title as a file name's tail: `previous-balances`. */
   slug: string
+  /**
+   * What makes this table itself: its heading and its columns, which is also
+   * what gathers the same table across pages into one. Two tables can slugify
+   * alike — `Tax Summary` and `Tax, Summary` — so the slug cannot be it, and
+   * a position cannot either: reading another page can add a table above this
+   * one, and a table dropped by hand must not come back as a different one.
+   */
+  key: string
   headers: string[]
   /** Its rows, each with the page it was printed on. */
   rows: Array<{ page: number; cells: string[] }>
@@ -334,7 +337,7 @@ export function extraTables(pages: readonly ExportPage[]): ExtraTable[] {
       const existing = found.get(key)
       const rows = table.rows.map((row) => ({ page, cells: [...row.cells] }))
       if (existing) existing.rows.push(...rows)
-      else found.set(key, { title, slug: slugify(title), headers: [...table.headers], rows })
+      else found.set(key, { title, slug: slugify(title), key, headers: [...table.headers], rows })
     })
   }
   return [...found.values()]
@@ -348,6 +351,25 @@ function slugify(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 48)
   return slug || 'table'
+}
+
+/**
+ * One extra table as JSON, with the page each row was printed on.
+ *
+ * The same shape the document's own `tables` carries, so a table taken on its
+ * own and the same table inside the whole export read alike.
+ */
+export function toTableJson(table: ExtraTable, total: number): ExtraTableJson {
+  return {
+    title: table.title,
+    headers: [...table.headers],
+    rows: table.rows.map((row) => ({
+      ...(total > 1 ? { page: row.page } : {}),
+      ...Object.fromEntries(
+        table.headers.map((header, index) => [header, row.cells[index] ?? '']),
+      ),
+    })),
+  }
 }
 
 /** One extra table as CSV, with a `Page` column when the document has pages. */

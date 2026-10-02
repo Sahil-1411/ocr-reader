@@ -17,6 +17,8 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
     tablePages,
     exportPages,
     fileName,
+    droppedTables,
+    toggleTable,
     onEditPage,
     validateAll,
     resetEdits,
@@ -152,6 +154,8 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
         total={isPdfMode ? pdfPages.length : 1}
         currentPage={currentPage}
         fileName={fileName}
+        dropped={droppedTables}
+        onToggleTable={toggleTable}
       />
     </div>
   )

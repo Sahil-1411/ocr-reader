@@ -44,6 +44,12 @@ export function useReceiptSession(): ReceiptSession {
   const [fileName, setFileName] = useState<string | null>(null)
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number } | null>(null)
 
+  /**
+   * Extra tables the reader has taken out of the export, by key. Kept here
+   * rather than in the card that shows them so it survives paging: a table is
+   * dropped for the document, not for the page it happens to be printed on.
+   */
+  const [droppedTables, setDroppedTables] = useState<ReadonlySet<string>>(new Set())
   const [pdfPages, setPdfPages] = useState<PdfPage[]>([])
   const [currentPage, setCurrentPage] = useState(0)
   const [isPdfMode, setIsPdfMode] = useState(false)
@@ -223,6 +229,7 @@ export function useReceiptSession(): ReceiptSession {
       setStages({})
       setPages(new Map())
       setPageErrors(new Map())
+      setDroppedTables(new Set())
       // The last file's picture must not stand in for this one while it loads.
       setHasPreview(false)
       setPreviewData(null)
@@ -346,6 +353,7 @@ export function useReceiptSession(): ReceiptSession {
     setPhase('idle')
     setPages(new Map())
     setPageErrors(new Map())
+    setDroppedTables(new Set())
     setError(null)
     setHasPreview(false)
     setPreviewData(null)
@@ -356,6 +364,15 @@ export function useReceiptSession(): ReceiptSession {
     setCurrentPage(0)
     setPdfProcessingPage(null)
   }
+
+  /** Take an extra table out of the export, or put it back. */
+  const toggleTable = useCallback((key: string) => {
+    setDroppedTables((dropped) => {
+      const next = new Set(dropped)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [])
 
   /** Look at another PDF page. Its rows show as soon as they are read. */
   const switchPdfPage = useCallback(
@@ -435,6 +452,8 @@ export function useReceiptSession(): ReceiptSession {
     failures,
     exportPages,
     tablePages,
+    droppedTables,
+    toggleTable,
     onFile,
     onEditPage,
     validateAll,

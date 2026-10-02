@@ -7,6 +7,7 @@ import {
   toSkippedCsv,
   toSkippedLog,
   toTableCsv,
+  toTableJson,
   type ExportPage,
 } from './export'
 import { toPublicJson, withCell } from '../ocr/receipt/assemble'
@@ -269,6 +270,41 @@ describe('extraTables', () => {
       'Date,Invoice,Balance',
       '08/06/2026,93354,$52.65',
     ])
+  })
+
+  it('writes it as its own JSON, in the shape the document carries it in', () => {
+    const [many] = extraTables([withExtra(1, [['08/06/2026', '93354', '$52.65']])])
+    expect(toTableJson(many!, 2)).toEqual({
+      title: 'Previous Balances',
+      headers: ['Date', 'Invoice', 'Balance'],
+      rows: [{ page: 1, Date: '08/06/2026', Invoice: '93354', Balance: '$52.65' }],
+    })
+    // One page, so there is no page to name.
+    expect(toTableJson(many!, 1).rows).toEqual([
+      { Date: '08/06/2026', Invoice: '93354', Balance: '$52.65' },
+    ])
+  })
+
+  it('leaves out a table the reader dropped, and keeps the rest', () => {
+    const pages = [withExtra(1, [['08/06/2026', '93354', '$52.65']])]
+    const [balances] = extraTables(pages)
+    const json = toDocumentJson(pages, 1, new Set([balances!.key]))
+    // The document's own rows are untouched; the dropped table is simply gone,
+    // and with nothing left beside them `tables` is not written at all.
+    expect(json?.rows).toEqual([{ QTY: '1', DESCRIPTION: 'WIDGET', PRICE: '2.00' }])
+    expect(json && 'tables' in json).toBe(false)
+    // A key for some other table drops nothing.
+    const kept = toDocumentJson(pages, 1, new Set(['not-a-table']))
+    expect(kept && 'tables' in kept ? kept.tables : undefined).toHaveLength(1)
+  })
+
+  it('keys a table by its heading and columns, so the same one is one', () => {
+    const tables = extraTables([
+      withExtra(1, [['08/06/2026', '93354', '$52.65']]),
+      withExtra(2, [['08/13/2026', '93363', '$35.90']]),
+    ])
+    expect(tables).toHaveLength(1)
+    expect(tables[0]?.key).toContain('Previous Balances')
   })
 
   it(`keeps the document export to the document's own table`, () => {

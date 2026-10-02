@@ -72,6 +72,10 @@ export interface ReceiptSession {
   failures: PageFailure[]
   exportPages: ExportPage[]
   tablePages: PageRows[]
+  /** Extra tables left out of the JSON export, by `ExtraTable.key`. */
+  droppedTables: ReadonlySet<string>
+  /** Take an extra table out of the JSON export, or put it back. */
+  toggleTable: (key: string) => void
   onFile: (file: File) => Promise<void>
   onEditPage: (pageIndex: number, rowIndex: number, cellIndex: number, value: string) => void
   /** Accept every row of the page on screen that is still waiting on a look. */

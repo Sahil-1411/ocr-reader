@@ -14,6 +14,7 @@ export default function App() {
           failures={session.failures}
           reading={session.busy}
           fileName={session.fileName}
+          droppedTables={session.droppedTables}
         />
       ) : (
         <div className="app__top">

@@ -1714,6 +1714,37 @@ button {
   color: var(--ok-text);
 }
 
+/*
+ * A table taken out of the export.
+ *
+ * Dimmed rather than hidden: the reader chose to leave it out of the JSON,
+ * not to stop looking at it, and the way back is the button in its own head.
+ * The head stays at full strength so that button and the two downloads are
+ * still plainly there to be used.
+ */
+.card--dropped {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.card--dropped .card__body {
+  opacity: 0.45;
+}
+
+.dropped-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--border-strong);
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 .view-more {
   display: flex;
   justify-content: center;

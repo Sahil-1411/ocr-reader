@@ -6,7 +6,7 @@
  * rows inside it are the same judgement, made once.
  */
 
-import { rowCells } from '../ocr/receipt/assemble'
+import { rowCells } from '../ocr/result'
 import type { OcrResult } from '../ocr/types'
 
 /** One page's rows as the table shows them. */
@@ -43,7 +43,7 @@ export const REVIEW_THRESHOLD = 0.55
 
 /** A printed label among the items: one cell by nature, not a row missing data. */
 export function isLabelRow(result: OcrResult, index: number): boolean {
-  return result.kind === 'table' && result.tableRows[index]?.label === true
+  return result.rows[index]?.label === true
 }
 
 function rowIsIncomplete(result: OcrResult, row: readonly string[], index: number): boolean {
@@ -53,20 +53,7 @@ function rowIsIncomplete(result: OcrResult, row: readonly string[], index: numbe
 }
 
 function rowConfidences(result: OcrResult): number[] {
-  switch (result.kind) {
-    case 'inventory':
-      return result.rows.map((row) => row.confidence)
-    case 'settlements':
-      return result.settlements.map((row) => row.confidence)
-    case 'invoice':
-      return result.fields.map((row) => row.confidence)
-    case 'table':
-      return result.tableRows.map((row) => row.confidence)
-    default: {
-      const unreachable: never = result.kind
-      return unreachable
-    }
-  }
+  return result.rows.map((row) => row.confidence)
 }
 
 export function rowViews(page: PageRows, reviewThreshold = REVIEW_THRESHOLD): RowView[] {

@@ -1192,6 +1192,30 @@ button {
   white-space: nowrap;
 }
 
+/*
+ * A rule between the columns.
+ *
+ * An invoice with ten columns is wider than the panel, so the table scrolls
+ * sideways and only part of it is ever in view. Without a line between them a
+ * value cannot be traced up to its own title: `$403.9200` under UNIT PRICE
+ * sits a few pixels from the ship quantity on its left, and reads as `5 $403`
+ * and `.9200` in two columns. The column a cell is in is the whole meaning of
+ * the cell, so it is drawn.
+ *
+ * Lighter than the row rule: the rows are what is being read, and the columns
+ * only have to be unambiguous.
+ */
+.fields th:not(:last-child),
+.fields td:not(:last-child) {
+  border-right: 1px solid var(--border-subtle);
+}
+
+/* The pinned columns carry their own edge, and must not draw a second one. */
+.fields th.th--seq,
+.fields td.td--seq {
+  border-right: none;
+}
+
 .fields tbody tr:last-child td {
   border-bottom: none;
 }
@@ -1636,6 +1660,7 @@ button {
   width: 100%;
   height: auto;
   background: #ffffff;
+  object-fit: contain;
 }
 
 .page-thumb__num {

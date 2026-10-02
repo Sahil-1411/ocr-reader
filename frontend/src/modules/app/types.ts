@@ -1,9 +1,8 @@
 import type { RefObject } from 'react'
 
 import type { StageMap } from '../../lib/stage-state'
-import type { WordBox } from '../../ocr/layout/rows'
-import type { PdfPage } from '../../lib/pdf-to-images'
-import type { OcrResult } from '../../ocr/types'
+import type { DocumentPage } from '../../ocr/api'
+import type { OcrResult, WordBox } from '../../ocr/types'
 import type { PageRows } from '../../components/ResultView'
 import type { ExportPage, PageFailure } from '../../lib/export'
 
@@ -54,10 +53,10 @@ export interface ReceiptSession {
   hasPreview: boolean
   fileName: string | null
   imageDimensions: { width: number; height: number } | null
-  pdfPages: PdfPage[]
+  /** Every page of the document, with where to fetch its picture. */
+  documentPages: DocumentPage[]
   currentPage: number
   isPdfMode: boolean
-  pdfProcessingPage: number | null
   previewRef: RefObject<HTMLCanvasElement | null>
   result: OcrResult | null
   edited: ReadonlySet<number>
@@ -66,7 +65,6 @@ export interface ReceiptSession {
   /** The words the page on screen was read from, for the text overlay. */
   words: readonly WordBox[]
   busy: boolean
-  unread: number[]
   pageError: string | undefined
   /** Pages the export has no rows for, with why, for the skipped log. */
   failures: PageFailure[]
@@ -82,7 +80,6 @@ export interface ReceiptSession {
   validateAll: () => void
   resetEdits: () => void
   cancel: () => void
-  readRemaining: () => void
   clearCurrent: () => void
   switchPdfPage: (pageIndex: number) => void
 }

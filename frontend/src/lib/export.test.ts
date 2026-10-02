@@ -10,28 +10,21 @@ import {
   toTableJson,
   type ExportPage,
 } from './export'
-import { toPublicJson, withCell } from '../ocr/receipt/assemble'
+import { toPublicJson, withCell } from '../ocr/result'
 import type { OcrResult } from '../ocr/types'
 
 function table(headers: string[], rows: string[][], extra: Partial<OcrResult> = {}): OcrResult {
   return {
     kind: 'table',
     headers,
-    rows: [],
-    settlements: [],
-    fields: [],
-    tableRows: rows.map((cells) => ({ cells, confidence: 1 })),
+    rows: rows.map((cells) => ({ cells, confidence: 1 })),
     tables: [{ headers, rows: rows.map((cells) => ({ cells, confidence: 1 })) }],
     validation: [],
     skipped: [],
     processingMeta: {
       reader: 'pdf text',
-      watermarkSuppressed: false,
-      watermarkPixelRatio: 0,
       wordCount: 0,
       sourceSize: { width: 1700, height: 2200 },
-      timingsMs: {},
-      totalMs: 0,
       warnings: [],
     },
     ...extra,
@@ -66,7 +59,7 @@ describe('toDocumentJson', () => {
 
   it('carries each page’s edits and its label rows', () => {
     const second = table(HEADERS, [['', '***DAMAGED IN TRANSIT***', ''], ['-1', 'LEAF BAG', '6.15']])
-    second.tableRows[0]!.label = true
+    second.rows[0]!.label = true
     const pages: ExportPage[] = [
       { page: 1, result: withCell(table(HEADERS, [['1', 'MINT SNUF', '31.20']]), 0, 1, 'MINT SNUFF') },
       { page: 2, result: second },
@@ -83,7 +76,10 @@ describe('toDocumentJson', () => {
     const json = toDocumentJson(
       [
         { page: 1, result: table(HEADERS, [['1', 'MINT SNUFF', '31.20']]) },
-        { page: 2, result: { ...invoice, fields: [{ label: 'TOTAL DUE', value: '31.20', confidence: 1 }] } },
+        {
+          page: 2,
+          result: { ...invoice, rows: [{ cells: ['TOTAL DUE', '31.20'], confidence: 1 }] },
+        },
       ],
       2,
     )
@@ -213,7 +209,7 @@ describe('columns that could collide', () => {
     const settled = (gamePack: string, name: string, dateSettled: string): OcrResult => ({
       ...table(['Game-Pack', 'Name'], []),
       kind: 'settlements',
-      settlements: [{ gamePack, name, dateSettled, confidence: 1 }],
+      rows: [{ cells: [gamePack, name, dateSettled], confidence: 1 }],
     })
     const csv = toCsv(
       [

@@ -7,7 +7,7 @@
  * reads those files has to change.
  */
 
-import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
+import { rowCells, toPublicJson } from '../ocr/result'
 import type { OcrResult, ReceiptKind, SkipReason } from '../ocr/types'
 
 /** One read page of the document, numbered from 1. */

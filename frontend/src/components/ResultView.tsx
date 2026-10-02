@@ -3,7 +3,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { extraTables, toTableCsv, toTableJson, type ExportPage } from '../lib/export'
 import { exportBaseName, saveFile } from '../lib/download'
 import { DownloadIcon } from './ExportButtons'
-import { rowCells, toPublicJson } from '../ocr/receipt/assemble'
+import { rowCells, toPublicJson } from '../ocr/result'
 import {
   REVIEW_THRESHOLD,
   rowViews,

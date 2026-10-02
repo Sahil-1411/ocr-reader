@@ -6,10 +6,9 @@ interface StageProgressProps {
 }
 
 const STAGE_LABELS: Record<(typeof STAGE_NAMES)[number], string> = {
-  init: 'Engine Ready',
-  watermark: 'Clean Image',
-  recognize: 'Read OCR',
-  assemble: 'Build Rows',
+  upload: 'Send Page',
+  read: 'Read Page',
+  rows: 'Build Rows',
 }
 
 export function StageProgress({ stages }: StageProgressProps) {

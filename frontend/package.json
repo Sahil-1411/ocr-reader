@@ -12,10 +12,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "pdfjs-dist": "^6.3.289",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "tesseract.js": "7.0.0"
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",

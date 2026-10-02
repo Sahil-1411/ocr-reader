@@ -21,9 +21,14 @@ row when exactly one in a column is unreadable, or left empty and flagged — ne
 ## Layout
 
 ```
-frontend/   the web app (Vite). Build output is frontend/dist
-python/     the PP-OCR server (serve.py, read_receipt.py)
+python/reader/   the reader: PDFs, recognised pages, columns, rows, checks
+python/          the server (serve.py) and the PP-OCR engine (read_receipt.py)
+frontend/        the web app (Vite). Build output is frontend/dist
 ```
+
+**All the reading happens in `python/reader/`.** The browser posts a file to
+`/document` and draws what comes back; it does not parse PDFs, recognise text, or build
+rows. There is one implementation of every rule, so a fix lands once.
 
 ## Quick start
 
@@ -36,30 +41,36 @@ pnpm --dir frontend install
 pnpm --dir frontend dev                    # the app, on http://localhost:5173
 ```
 
-The page calls `/read` on its own host. Vite forwards that to the Python server.
-When `serve.py` is not running the app says so and reads with Tesseract instead, which is
-less accurate. See [`python/README.md`](python/README.md) for the reader and its scores.
+The page calls `/document` and `/page` on its own host. Vite forwards those to the Python server.
+`serve.py` is the reader: without it the app says so and reads nothing, because there is no
+second reader to fall back to. See [`python/README.md`](python/README.md) for the engine and
+its scores.
 
 ```bash
-pnpm --dir frontend test     # unit tests + scoring against frontend/tools/fixtures/ground-truth.json
+pnpm --dir frontend test     # the app's own tests (export shaping, row status)
 pnpm --dir frontend build    # typecheck + production build
+.venv/bin/python python/check_corpus.py   # the reader, against every document you keep
 ```
+
+The reader must be running for the app to read anything: `pnpm reader` starts it. Without
+it the app says so instead of falling back to a less accurate reader, because there is no
+longer a second one.
 
 ### The regression corpus
 
-The readers take the layout from the page rather than from a template, so a rule that
+The reader takes the layout from the page rather than from a template, so a rule that
 squares a column on one invoice decides a different column on the next. A change therefore
 cannot be judged on the document that prompted it.
 
 Put the documents you care about in `frontend/tools/corpus/` — it is excluded from the
 repository, like `public/samples/`, because they are whole invoices — and
-[`tools/corpus.test.ts`](frontend/tools/corpus.test.ts) records how each one reads. After
-that, any change that moves a row on any of them fails the test and prints the rows that
-moved, so an improvement on one form can be told apart from a regression on another.
+[`python/check_corpus.py`](python/check_corpus.py) records how each one reads. After that,
+any change that moves a row on any of them is reported with the rows that moved, so an
+improvement on one form can be told apart from a regression on another.
 
 ```bash
-pnpm --dir frontend exec vitest run tools/corpus.test.ts                 # what moved?
-UPDATE_CORPUS=1 pnpm --dir frontend exec vitest run tools/corpus.test.ts # record it
+.venv/bin/python python/check_corpus.py                 # what moved?
+UPDATE_CORPUS=1 .venv/bin/python python/check_corpus.py # record it
 ```
 
 It is a diff, not a verdict: a failure may be exactly the change you wanted. With no corpus
@@ -89,18 +100,24 @@ hosted on a different origin than the API, build the frontend with
 ## How it works
 
 ```
-browser: image → PNG → POST /read
-python:  watermark suppression → PP-OCR → word boxes (spaces restored from ink gaps)
-browser: layout/rows.ts → receipt/validate.ts → JSON
+browser: the file → POST /document
+python:  PDF text layer, or watermark suppression → PP-OCR → word boxes
+         → glyphs joined → columns → rows → the receipt's own checks
+browser: draws the rows, and GET /page for the picture of each page
 ```
 
-Python stops at word boxes. Rows are built in TypeScript, so the app and
-`frontend/tools/score.test.ts` run the same code and a score change is a reading change.
+A page is read from the PDF's own text where it has one, because that text is exact and a
+recogniser's is not; a scan or a photograph is recognised, and only those pages pay for it.
 
-- **`layout/rows.ts`** finds the printed `Game Name Int Rec Act Set` header and reads every
+- **`reader/columns.py`** takes a table's layout from the page: the printed titles say
+  which column is which, and the rows say where one ends and the next begins.
+- **`reader/rows.py`** finds the printed `Game Name Int Rec Act Set` header and reads every
   row against its columns. Run-together count blobs such as `005000-000` are split three
   digits a column.
-- **`receipt/validate.ts`** checks each receipt against its own arithmetic: inventory
+- **`reader/glyphs.py`** joins the glyphs a recogniser returns one at a time. On a
+  line-printer face `144732` comes back as `1 4 4 7 3 2`, and every column rule reads the
+  layout from where words start.
+- **`reader/validate.py`** checks each receipt against its own arithmetic: inventory
   columns against TOTALS, the settlement count against `Packs Total Settled`, the invoice
   header lines against `TOTAL DUE`. Anything solved or unreadable is listed above the
   table and its row highlighted.
@@ -116,21 +133,25 @@ Python stops at word boxes. Rows are built in TypeScript, so the app and
 ## Where the code lives
 
 ```
+python/
+  reader/
+    boxes.py            the word box, and grouping words into lines
+    pdf_text.py         a PDF's own text, and rendering its pages
+    glyphs.py           joining the glyphs a recogniser splits
+    columns.py          a multi-column table, read off its printed titles
+    rows.py             the lottery readers: inventory, settlements, invoice
+    validate.py         each receipt against its own arithmetic
+    assemble.py         which kind of page this is, and its reading
+    document.py         a whole file in, every page's reading out
+  serve.py              the server: POST /document, GET /page (localhost, or --live)
+  read_receipt.py       the PP-OCR engine
+  check_corpus.py       every document you keep, against how it last read
 frontend/src/
   App.tsx               upload, result table, JSON copy/download
   components/           React UI
-  lib/                  image I/O, progress state
+  lib/                  export shaping, downloads, progress state
   ocr/
-    types.ts            shared contract — depends on nothing
-    client.ts           picks the reader, runs a read, assembles the result
-    python/reader.ts    talks to python/serve.py
-    tesseract/          the fallback reader
-    layout/rows.ts      word boxes → receipt rows
-    receipt/            assembly, validation, watermark suppression
-frontend/tools/
-  score.test.ts         scores the rows against the hand-checked fixture
-python/
-  serve.py              PP-OCR server (localhost, or --live)
-  read_receipt.py       the reader itself
-frontend/harness.html   dev page that runs the sample receipts through the app
+    types.ts            what the reader returns — depends on nothing
+    api.ts              POST /document, GET /page
+    result.ts           listing cells, editing one, shaping the export
 ```

@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 
-import { extraTables, toTableCsv, toTableJson, type ExportPage } from '../lib/export'
+import { requestExport, type ExportPage, type ExtraTable } from '../ocr/api'
 import { exportBaseName, saveFile } from '../lib/download'
 import { DownloadIcon } from './ExportButtons'
 import { rowCells, toPublicJson } from '../ocr/result'
@@ -439,6 +439,8 @@ function isNumericHeader(header: string): boolean {
 interface ExtraTablesProps {
   /** Every page read so far, in page order. */
   pages: readonly ExportPage[]
+  /** The tables printed under the pages' own, as the reader gathered them. */
+  tables: readonly ExtraTable[]
   /** Pages in the document: 1 for an image. */
   total: number
   /** Index of the page on screen within the document. */
@@ -462,13 +464,13 @@ interface ExtraTablesProps {
  */
 export function ExtraTables({
   pages,
+  tables,
   total,
   currentPage,
   fileName,
   dropped,
   onToggleTable,
 }: ExtraTablesProps) {
-  const tables = useMemo(() => extraTables(pages), [pages])
   const page = currentPage + 1
   const onPage = useMemo(
     () =>
@@ -513,14 +515,18 @@ export function ExtraTables({
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() =>
-                  saveFile(
+                onClick={() => {
+                  void requestExport({
+                    what: 'table',
+                    format: 'csv',
+                    key: table.key,
+                    pages,
+                    total,
+                  }).then((text) =>
                     // The byte-order mark tells Excel the file is UTF-8.
-                    `﻿${toTableCsv(table, total)}`,
-                    'text/csv;charset=utf-8;',
-                    `${base}-${table.slug}.csv`,
+                    saveFile(`﻿${text}`, 'text/csv;charset=utf-8;', `${base}-${table.slug}.csv`),
                   )
-                }
+                }}
                 title={
                   table.rows.length > rows.length
                     ? `Download ${table.title} from every page as a CSV spreadsheet`
@@ -533,13 +539,17 @@ export function ExtraTables({
               <button
                 type="button"
                 className="btn btn--sm"
-                onClick={() =>
-                  saveFile(
-                    `${JSON.stringify(toTableJson(table, total), null, 2)}\n`,
-                    'application/json',
-                    `${base}-${table.slug}.json`,
+                onClick={() => {
+                  void requestExport({
+                    what: 'table',
+                    format: 'json',
+                    key: table.key,
+                    pages,
+                    total,
+                  }).then((text) =>
+                    saveFile(`${text}\n`, 'application/json', `${base}-${table.slug}.json`),
                   )
-                }
+                }}
                 title={
                   table.rows.length > rows.length
                     ? `Download ${table.title} from every page as JSON`

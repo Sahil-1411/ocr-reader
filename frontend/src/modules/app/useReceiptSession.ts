@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { reduceProgress, type StageMap } from '../../lib/stage-state'
-import { readDocument, ReaderError, readerIsReady, type DocumentPage } from '../../ocr/api'
+import {
+  readDocument,
+  ReaderError,
+  readerIsReady,
+  type DocumentPage,
+  type ExtraTable,
+  type PageFailure,
+} from '../../ocr/api'
 import { rowCells, withCell } from '../../ocr/result'
-import type { PageFailure } from '../../lib/export'
 import type { ProgressEvent } from '../../ocr/types'
 import { NO_EDITS, NO_WORDS, type PageRead, type Phase, type ReceiptSession } from './types'
 
@@ -56,6 +62,7 @@ export function useReceiptSession(): ReceiptSession {
    */
   const [droppedTables, setDroppedTables] = useState<ReadonlySet<string>>(new Set())
   const [documentPages, setDocumentPages] = useState<DocumentPage[]>([])
+  const [extraTables, setExtraTables] = useState<ExtraTable[]>([])
   const [currentPage, setCurrentPage] = useState(0)
   const [isPdfMode, setIsPdfMode] = useState(false)
 
@@ -109,6 +116,7 @@ export function useReceiptSession(): ReceiptSession {
     setHasPreview(false)
     setError(null)
     setDocumentPages([])
+    setExtraTables([])
     setCurrentPage(0)
     setIsPdfMode(false)
 
@@ -129,6 +137,7 @@ export function useReceiptSession(): ReceiptSession {
       const first = read.pages[0]
       if (!first) throw new ReaderError('The reader found no pages in that file.')
       setDocumentPages(read.pages)
+      setExtraTables(read.extraTables)
       setIsPdfMode(read.pages.length > 1 || file.type === 'application/pdf')
       setPages(new Map(read.pages.map((page, index) => [index, freshRead(page)])))
       const rows = read.pages.reduce((total, page) => total + page.result.rows.length, 0)
@@ -213,6 +222,7 @@ export function useReceiptSession(): ReceiptSession {
     setFileName(null)
     setImageDimensions(null)
     setDocumentPages([])
+    setExtraTables([])
     setIsPdfMode(false)
     setCurrentPage(0)
   }
@@ -276,6 +286,7 @@ export function useReceiptSession(): ReceiptSession {
     fileName,
     imageDimensions,
     documentPages,
+    extraTables,
     currentPage,
     isPdfMode,
     previewRef,

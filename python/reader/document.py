@@ -229,4 +229,26 @@ def page_json(reading: PageReading) -> dict:
 
 
 def document_json(readings: Sequence[PageReading]) -> dict:
-    return {"pages": [page_json(reading) for reading in readings]}
+    """
+    Every page's reading, and the tables printed under them gathered once.
+
+    The extra tables are gathered here rather than by the page because their
+    key is what the page drops them by, and a key the two sides compute
+    separately is a key that can disagree.
+    """
+    from .export import ExportPage, extra_tables
+
+    pages = [ExportPage.of(reading.number, reading.result) for reading in readings]
+    return {
+        "pages": [page_json(reading) for reading in readings],
+        "extraTables": [
+            {
+                "title": table.title,
+                "slug": table.slug,
+                "key": table.key,
+                "headers": list(table.headers),
+                "rows": [{"page": page, "cells": cells} for page, cells in table.rows],
+            }
+            for table in extra_tables(pages)
+        ],
+    }

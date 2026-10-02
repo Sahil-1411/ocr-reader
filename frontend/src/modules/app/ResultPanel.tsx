@@ -14,6 +14,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
     currentPage,
     isPdfMode,
     documentPages,
+    extraTables,
     tablePages,
     exportPages,
     fileName,
@@ -151,6 +152,7 @@ export function ResultPanel({ session }: { session: ReceiptSession }) {
           it, something like `Previous Balances`. Each is itself. */}
       <ExtraTables
         pages={exportPages}
+        tables={extraTables}
         total={isPdfMode ? documentPages.length : 1}
         currentPage={currentPage}
         fileName={fileName}

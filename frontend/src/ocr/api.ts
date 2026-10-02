@@ -28,8 +28,48 @@ export interface DocumentPage {
   size: { width: number; height: number }
 }
 
+/** A table printed under the pages' own, gathered across the pages it is on. */
+export interface ExtraTable {
+  title: string
+  /** That title as a file name's tail: `previous-balances`. */
+  slug: string
+  /** Its heading and its columns, which is what makes it itself across pages. */
+  key: string
+  headers: string[]
+  rows: Array<{ page: number; cells: string[] }>
+}
+
 export interface ReadDocument {
   pages: DocumentPage[]
+  extraTables: ExtraTable[]
+}
+
+/** One read page of the document, as the app holds it: edits and all. */
+export interface ExportPage {
+  /** 1-based, as the document numbers its pages. */
+  page: number
+  result: OcrResult
+}
+
+/** A page the reader produced no rows for, and why. */
+export interface PageFailure {
+  page: number
+  message: string
+}
+
+/** Which export to ask for, and in what shape. */
+export interface ExportRequest {
+  /** The document's rows, the log of what was left out, or one extra table. */
+  what: 'data' | 'log' | 'table'
+  format: 'csv' | 'json'
+  pages: readonly ExportPage[]
+  /** Pages in the document, which may be more than were read. */
+  total: number
+  /** Extra tables to leave out of the data export, by key. */
+  dropped?: readonly string[]
+  failures?: readonly PageFailure[]
+  /** Which extra table, when `what` is `table`. */
+  key?: string
 }
 
 /** The reader is not running, or refused the file. Carries what it said. */
@@ -106,8 +146,13 @@ export async function readDocument(file: Blob, signal?: AbortSignal): Promise<Re
   }
   if (!response.ok) await failure(response)
 
-  const body = (await response.json()) as { document: string; pages: PageJson[] }
+  const body = (await response.json()) as {
+    document: string
+    pages: PageJson[]
+    extraTables: ExtraTable[]
+  }
   return {
+    extraTables: body.extraTables ?? [],
     pages: body.pages.map((page) => ({
       page: page.page,
       size: page.size,
@@ -132,4 +177,42 @@ export async function readDocument(file: Blob, signal?: AbortSignal): Promise<Re
       },
     })),
   }
+}
+
+/**
+ * One export, shaped by the reader.
+ *
+ * The pages are posted back rather than read again because the app may have
+ * had a cell typed into it or a table taken out, and the export is of what is
+ * on screen. The shaping itself — a row's page beside it, two columns that
+ * share a title, the n-th `PRICE` of a page under the document's n-th — is
+ * the reader's, so there is one answer and not two.
+ */
+export async function requestExport(request: ExportRequest, signal?: AbortSignal): Promise<string> {
+  const response = await fetch(`${READER}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal,
+    body: JSON.stringify({
+      what: request.what,
+      format: request.format,
+      total: request.total,
+      dropped: request.dropped ?? [],
+      failures: request.failures ?? [],
+      ...(request.key ? { key: request.key } : {}),
+      pages: request.pages.map(({ page, result }) => ({
+        page,
+        kind: result.kind,
+        ...(result.title ? { title: result.title } : {}),
+        headers: result.headers,
+        rows: result.rows,
+        tables: result.tables,
+        skipped: result.skipped,
+      })),
+    }),
+  })
+  if (!response.ok) await failure(response)
+  return request.format === 'csv'
+    ? await response.text()
+    : JSON.stringify(await response.json(), null, 2)
 }

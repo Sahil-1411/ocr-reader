@@ -9,18 +9,11 @@
  * own downloads in the panel that chip opens.
  */
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { CopyButton, DownloadIcon } from '../../components/ExportButtons'
 import { exportBaseName, saveFile } from '../../lib/download'
-import {
-  toCsv,
-  toDocumentJson,
-  toSkippedCsv,
-  toSkippedLog,
-  type ExportPage,
-  type PageFailure,
-} from '../../lib/export'
+import { requestExport, type ExportPage, type PageFailure } from '../../ocr/api'
 import { AppHeader } from './AppHeader'
 
 interface ExportDockProps {
@@ -53,20 +46,39 @@ export function ExportDock({
   const toggle = (next: Exclude<Panel, null>) =>
     setPanel((open) => (open === next ? null : next))
 
-  const publicData = useMemo(
-    () => toDocumentJson(pages, total, droppedTables),
-    [pages, total, droppedTables],
+  // What the reader last sent for an open panel. Empty until a panel is
+  // opened: the export is shaped by the reader, and asking it to shape one
+  // nobody has asked to see is a round trip for nothing.
+  const [json, setJson] = useState('')
+  const [logJson, setLogJson] = useState('')
+  const rowCount = useMemo(
+    () => pages.reduce((count, { result }) => count + result.rows.length, 0),
+    [pages],
   )
-  const json = useMemo(() => JSON.stringify(publicData, null, 2), [publicData])
-  const rowCount = publicData?.rows.length ?? 0
   const exportReady = !reading && pages.length > 0
   const exportWaiting = reading ? 'Export includes every page once all of them are read' : undefined
-  const exportBase = exportBaseName(fileName, `${publicData?.kind ?? 'receipt'}-receipt`)
+  const exportBase = exportBaseName(fileName, `${pages[0]?.result.kind ?? 'receipt'}-receipt`)
 
-  const log = useMemo(() => toSkippedLog(pages, total, failures), [pages, total, failures])
-  const logJson = useMemo(() => JSON.stringify(log, null, 2), [log])
-  const skipped = log.rows.length
-  const failed = log.failedPages?.length ?? 0
+  const skipped = useMemo(
+    () => pages.reduce((count, { result }) => count + result.skipped.length, 0) + failures.length,
+    [pages, failures],
+  )
+  // The log the reader sent, for the panel's own table. Parsed rather than
+  // rebuilt here so the rows on screen are the rows the download carries.
+  const log = useMemo(() => {
+    try {
+      return JSON.parse(logJson || '{}') as {
+        failedPages?: number[]
+        rows?: Array<{ page: number; reason: string; what: string; text: string; confidence?: number }>
+      }
+    } catch {
+      return {}
+    }
+  }, [logJson])
+  const logRows = log.rows ?? []
+  // From the pages, not from the log: the chip in the bar is there before any
+  // panel is opened, and the reader's log is only fetched once one is.
+  const failed = failures.length
   const logReady = !reading && skipped > 0
   const logWaiting = reading ? 'The log covers every page once all of them are read' : undefined
   const logBase = `${exportBaseName(fileName, 'receipt')}-skipped`
@@ -81,16 +93,42 @@ export function ExportDock({
         ? `${total} pages · ${rows}`
         : `${pages.length} of ${total} pages · ${rows}`
 
-  const downloadExportJson = () => saveFile(json, 'application/json', `${exportBase}.json`)
-  const downloadExportCsv = () =>
-    saveFile(`﻿${toCsv(pages, total)}`, 'text/csv;charset=utf-8;', `${exportBase}.csv`)
-  const downloadLogJson = () => saveFile(logJson, 'application/json', `${logBase}.json`)
-  const downloadLogCsv = () =>
-    saveFile(
-      `﻿${toSkippedCsv(pages, total, failures)}`,
-      'text/csv;charset=utf-8;',
-      `${logBase}.csv`,
+  const ask = (what: 'data' | 'log', format: 'csv' | 'json') =>
+    requestExport({ what, format, pages, total, dropped: [...droppedTables], failures })
+
+  // Only the open panel is fetched, and only once it is open. A panel left
+  // shut costs nothing, and one left open follows an edit or a dropped table.
+  useEffect(() => {
+    if (panel === null || reading || pages.length === 0) return
+    const what = panel === 'json' ? 'data' : 'log'
+    const set = panel === 'json' ? setJson : setLogJson
+    let live = true
+    void ask(what, 'json')
+      .then((text) => live && set(text))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panel, pages, total, droppedTables, failures, reading])
+
+  const save = (
+    what: 'data' | 'log',
+    format: 'csv' | 'json',
+    name: string,
+  ) => {
+    void ask(what, format).then((text) =>
+      format === 'csv'
+        ? // The byte-order mark tells Excel the file is UTF-8.
+          saveFile(`﻿${text}`, 'text/csv;charset=utf-8;', name)
+        : saveFile(text, 'application/json', name),
     )
+  }
+
+  const downloadExportJson = () => save('data', 'json', `${exportBase}.json`)
+  const downloadExportCsv = () => save('data', 'csv', `${exportBase}.csv`)
+  const downloadLogJson = () => save('log', 'json', `${logBase}.json`)
+  const downloadLogCsv = () => save('log', 'csv', `${logBase}.csv`)
 
   const status = (
     <>
@@ -128,7 +166,7 @@ export function ExportDock({
         JSON
       </button>
       <CopyButton
-        text={json}
+        text={() => ask('data', 'json')}
         label="Copy every row as JSON"
         title={exportWaiting ?? 'Copy every row as JSON'}
         disabled={!exportReady}
@@ -190,7 +228,7 @@ export function ExportDock({
                 JSON
               </button>
               <CopyButton
-                text={logJson}
+                text={() => ask('log', 'json')}
                 label="Copy the log as JSON"
                 title={logWaiting ?? 'Copy the log as JSON'}
                 disabled={!logReady}
@@ -209,7 +247,7 @@ export function ExportDock({
                 </tr>
               </thead>
               <tbody>
-                {log.rows.map((row, index) => (
+                {logRows.map((row, index) => (
                   <tr
                     key={`${row.page}-${index}`}
                     className={row.reason === 'page-error' ? 'fields__row--flagged' : undefined}

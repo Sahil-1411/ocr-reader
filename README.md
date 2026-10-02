@@ -47,9 +47,9 @@ second reader to fall back to. See [`python/README.md`](python/README.md) for th
 its scores.
 
 ```bash
-pnpm --dir frontend test     # the app's own tests (export shaping, row status)
+pnpm test                    # the app's tests and the reader's
 pnpm --dir frontend build    # typecheck + production build
-.venv/bin/python python/check_corpus.py   # the reader, against every document you keep
+pnpm corpus                  # the reader, against every document you keep
 ```
 
 The reader must be running for the app to read anything: `pnpm reader` starts it. Without
@@ -104,6 +104,14 @@ browser: the file → POST /document
 python:  PDF text layer, or watermark suppression → PP-OCR → word boxes
          → glyphs joined → columns → rows → the receipt's own checks
 browser: draws the rows, and GET /page for the picture of each page
+         → POST /export for the CSV or JSON, shaped by the reader
+```
+
+A caller with nothing to edit can skip the middle step entirely:
+
+```bash
+curl -s --data-binary @invoice.pdf 'http://127.0.0.1:8756/document?format=csv'
+curl -s --data-binary @invoice.pdf 'http://127.0.0.1:8756/document?format=json'
 ```
 
 A page is read from the PDF's own text where it has one, because that text is exact and a
@@ -143,15 +151,18 @@ python/
     validate.py         each receipt against its own arithmetic
     assemble.py         which kind of page this is, and its reading
     document.py         a whole file in, every page's reading out
+    export.py           every page as one CSV or JSON, tables and log beside it
+  tests/                the export, case by case
   serve.py              the server: POST /document, GET /page (localhost, or --live)
   read_receipt.py       the PP-OCR engine
   check_corpus.py       every document you keep, against how it last read
 frontend/src/
   App.tsx               upload, result table, JSON copy/download
   components/           React UI
-  lib/                  export shaping, downloads, progress state
+  lib/                  downloads, theme, progress state
+  components/row-status.ts  which rows still want a look
   ocr/
     types.ts            what the reader returns — depends on nothing
-    api.ts              POST /document, GET /page
-    result.ts           listing cells, editing one, shaping the export
+    api.ts              /document, /page, /export
+    result.ts           listing a page's cells and editing one
 ```

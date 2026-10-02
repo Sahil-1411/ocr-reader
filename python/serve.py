@@ -52,6 +52,17 @@ from read_receipt import (  # noqa: E402
 )
 from reader.boxes import WordBox  # noqa: E402
 from reader.document import document_json, looks_like_pdf, read_document  # noqa: E402
+from reader.export import (  # noqa: E402
+    ExportPage,
+    PageFailure,
+    extra_tables,
+    to_csv,
+    to_document_json,
+    to_skipped_csv,
+    to_skipped_log,
+    to_table_csv,
+    to_table_json,
+)
 from reader.pdf_text import DPI, render_page  # noqa: E402
 
 # Dev server and preview. A live site is allowed when its Origin host matches
@@ -279,7 +290,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._origin_ok():
             self._send(403, {"error": "origin not allowed"}, origin)
             return
-        if self.path not in ("/read", "/document"):
+        route = urlparse(self.path).path
+        if route not in ("/read", "/document", "/export"):
             self._send(404, {"error": "not found"}, origin)
             return
 
@@ -305,9 +317,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(503, {"error": "the reader is busy, try again shortly"}, origin)
             return
 
-        if self.path == "/document":
+        if route == "/export":
+            # Shaping an export reads nothing, so it does not wait behind a read.
+            _pending_reads.release()
+            self._write_export(raw, origin)
+            return
+
+        if route == "/document":
             try:
-                self._read_document(raw, origin)
+                self._read_document(raw, origin, urlparse(self.path).query)
             finally:
                 _pending_reads.release()
             return
@@ -342,7 +360,65 @@ class Handler(BaseHTTPRequestHandler):
         )
 
 
-    def _read_document(self, raw: bytes, origin: str | None) -> None:
+    def _write_export(self, raw: bytes, origin: str | None) -> None:
+        """
+        The document as one export, from the pages the caller holds.
+
+        Posted back rather than kept here because the app may have had a cell
+        typed into it or a table taken out, and the export is of what is on
+        screen. A caller with nothing to change can ask `/document` for the
+        same thing in one call instead.
+        """
+        try:
+            body = json.loads(raw)
+            pages = [ExportPage.from_json(page) for page in body.get("pages") or []]
+            total = int(body.get("total") or len(pages))
+            dropped = set(body.get("dropped") or [])
+            failures = [
+                PageFailure(page=int(f["page"]), message=str(f["message"]))
+                for f in body.get("failures") or []
+            ]
+            what = body.get("what") or "data"
+            form = body.get("format") or "json"
+        except Exception as error:  # noqa: BLE001
+            self._send(400, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        try:
+            if what == "log":
+                payload = (
+                    to_skipped_csv(pages, total, failures)
+                    if form == "csv"
+                    else to_skipped_log(pages, total, failures)
+                )
+            elif what == "table":
+                wanted = body.get("key")
+                table = next((t for t in extra_tables(pages) if t.key == wanted), None)
+                if table is None:
+                    self._send(404, {"error": "no such table on these pages"}, origin)
+                    return
+                payload = to_table_csv(table, total) if form == "csv" else to_table_json(table, total)
+            else:
+                payload = to_csv(pages, total) if form == "csv" else to_document_json(pages, total, dropped)
+        except Exception as error:  # noqa: BLE001
+            self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        if form == "csv":
+            self._send_text(200, payload or "", "text/csv; charset=utf-8", origin)
+            return
+        self._send(200, payload if payload is not None else {}, origin)
+
+    def _send_text(self, status: int, text: str, content_type: str, origin: str | None) -> None:
+        body = text.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self._allow_origin(origin)
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_document(self, raw: bytes, origin: str | None, query: str = "") -> None:
         """
         A whole document in, its reading out.
 
@@ -359,6 +435,17 @@ class Handler(BaseHTTPRequestHandler):
                 finished = time.perf_counter()
         except Exception as error:  # noqa: BLE001 - report, never crash the server
             self._send(500, {"error": f"{type(error).__name__}: {error}"}, origin)
+            return
+
+        # `?format=` is for a caller that only wants the finished export and
+        # has nothing to edit: one call instead of three.
+        wanted = (parse_qs(query).get("format") or [""])[0]
+        if wanted in ("csv", "json"):
+            pages = [ExportPage.of(r.number, r.result) for r in readings]
+            if wanted == "csv":
+                self._send_text(200, to_csv(pages, len(pages)), "text/csv; charset=utf-8", origin)
+            else:
+                self._send(200, to_document_json(pages, len(pages)) or {}, origin)
             return
 
         payload["document"] = _remember(raw)

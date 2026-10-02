@@ -1,10 +1,9 @@
 import type { RefObject } from 'react'
 
 import type { StageMap } from '../../lib/stage-state'
-import type { DocumentPage } from '../../ocr/api'
+import type { DocumentPage, ExportPage, ExtraTable, PageFailure } from '../../ocr/api'
 import type { OcrResult, WordBox } from '../../ocr/types'
 import type { PageRows } from '../../components/ResultView'
-import type { ExportPage, PageFailure } from '../../lib/export'
 
 export type Phase = 'idle' | 'booting' | 'running' | 'done' | 'error'
 
@@ -55,6 +54,8 @@ export interface ReceiptSession {
   imageDimensions: { width: number; height: number } | null
   /** Every page of the document, with where to fetch its picture. */
   documentPages: DocumentPage[]
+  /** The tables printed under the pages' own, as the reader gathered them. */
+  extraTables: ExtraTable[]
   currentPage: number
   isPdfMode: boolean
   previewRef: RefObject<HTMLCanvasElement | null>

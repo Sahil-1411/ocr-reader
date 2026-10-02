@@ -21,15 +21,58 @@ from typing import Any, Sequence
 
 from .assemble import OcrResult, row_cells
 
-#: What each skip reason means, in the words the log shows.
-SKIP_REASON = {
-    "note": "Note removed from the line",
-    "furniture": "Page header, footer, or banner",
-    "repeated-header": "Column header printed again",
-    "summary": "Totals or subtotal line",
-    "unplaced": "Line that belongs to no item",
-    "page-error": "Page produced no rows",
-}
+#: What each skip reason means, for somebody who did not write the reader.
+#:
+#: `what` names it, `detail` says why leaving it out was right, and `check`
+#: marks the two that might not have been. The order is the order the groups
+#: are shown in: what deserves a look first, the rest after it.
+SKIP_REASONS: tuple[dict, ...] = (
+    {
+        "reason": "unplaced",
+        "what": "Not placed in a column",
+        "detail": (
+            "Printed among the items but it did not read as one. Worth checking "
+            "against the page — this is the only kind that might be data."
+        ),
+        "check": True,
+    },
+    {
+        "reason": "page-error",
+        "what": "Page produced no rows",
+        "detail": "Nothing on this page could be read, so none of it is in the data.",
+        "check": True,
+    },
+    {
+        "reason": "note",
+        "what": "Note cut from an item",
+        "detail": (
+            "Wording removed from an item's own line, such as OUT OF STOCK. "
+            "The item itself was kept."
+        ),
+        "check": False,
+    },
+    {
+        "reason": "summary",
+        "what": "Total or subtotal",
+        "detail": "A figure the document adds up. The lines it adds up are in the data.",
+        "check": False,
+    },
+    {
+        "reason": "repeated-header",
+        "what": "Column titles printed again",
+        "detail": "The table's own header, printed again further down.",
+        "check": False,
+    },
+    {
+        "reason": "furniture",
+        "what": "Page furniture",
+        "detail": "A header, footer, page number or banner.",
+        "check": False,
+    },
+)
+
+SKIP_REASON = {entry["reason"]: entry["what"] for entry in SKIP_REASONS}
+_REASON_ORDER = {entry["reason"]: index for index, entry in enumerate(SKIP_REASONS)}
 
 
 @dataclass(slots=True)
@@ -322,6 +365,7 @@ def to_skipped_log(
                     "page": page.page,
                     "reason": reason,
                     "what": SKIP_REASON.get(reason, reason),
+                    "check": _REASON_ORDER.get(reason, 99) < 2,
                     "text": line["text"],
                     "confidence": round(float(line["confidence"]), 2),
                 }
@@ -332,6 +376,7 @@ def to_skipped_log(
                 "page": failure.page,
                 "reason": "page-error",
                 "what": SKIP_REASON["page-error"],
+                "check": True,
                 "text": failure.message,
             }
         )
@@ -341,8 +386,88 @@ def to_skipped_log(
         "pages": total,
         "skipped": len(rows),
         **({"failedPages": failed} if failed else {}),
+        # Counted in lines, not in times: `CONFIRM` printed at the foot of
+        # seven pages is one thing to look at, not seven.
+        "needsChecking": sum(
+            group["lines"] for group in _group(rows) if group["check"]
+        ),
+        "groups": _group(rows),
         "rows": rows,
     }
+
+
+def page_range(pages: Sequence[int]) -> str:
+    """
+    `1-7`, `1-3, 5`, `4`: the pages a line was printed on, as a person writes
+    them. A line a long document repeats on every page is one line, not forty.
+    """
+    ordered = sorted(set(pages))
+    if not ordered:
+        return ""
+    spans: list[list[int]] = [[ordered[0], ordered[0]]]
+    for page in ordered[1:]:
+        if page == spans[-1][1] + 1:
+            spans[-1][1] = page
+        else:
+            spans.append([page, page])
+    return ", ".join(
+        str(start) if start == end else f"{start}-{end}" for start, end in spans
+    )
+
+
+def _group(rows: Sequence[dict]) -> list[dict]:
+    """
+    The log by kind, and within a kind one entry per printed line.
+
+    A flat list of every line on every page is what the reader saw, not what a
+    person needs: the same `P.O.: WEB6842382` on seven pages is one line the
+    reader left out seven times, and saying so once with its pages beside it is
+    both shorter and clearer than saying it seven times. What matters most —
+    the lines that might have been data — is put first.
+    """
+    by_reason: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        lines = by_reason.setdefault(row["reason"], {})
+        entry = lines.get(row["text"])
+        if entry is None:
+            lines[row["text"]] = {
+                "text": row["text"],
+                "pages": [row["page"]],
+                **({"confidence": row["confidence"]} if "confidence" in row else {}),
+            }
+        else:
+            entry["pages"].append(row["page"])
+            if "confidence" in row:
+                entry["confidence"] = min(entry.get("confidence", 1.0), row["confidence"])
+
+    groups: list[dict] = []
+    for meta in SKIP_REASONS:
+        lines = by_reason.get(meta["reason"])
+        if not lines:
+            continue
+        entries = []
+        for entry in lines.values():
+            pages = sorted(set(entry["pages"]))
+            entries.append(
+                {
+                    **entry,
+                    "pages": pages,
+                    "pageRange": page_range(pages),
+                    "times": len(entry["pages"]),
+                }
+            )
+        groups.append(
+            {
+                "reason": meta["reason"],
+                "what": meta["what"],
+                "detail": meta["detail"],
+                "check": meta["check"],
+                "lines": len(entries),
+                "times": sum(entry["times"] for entry in entries),
+                "entries": entries,
+            }
+        )
+    return groups
 
 
 def to_skipped_csv(
@@ -350,19 +475,28 @@ def to_skipped_csv(
     total: int,
     failures: Sequence[PageFailure] = (),
 ) -> str:
-    """The same log as CSV, with a `Page` column however long the document is."""
+    """
+    The log as a spreadsheet: one row per printed line, not per sighting.
+
+    `Check` first, because a spreadsheet is sorted and filtered, and the one
+    question to ask of this file is "is any of it data?". Everything under
+    `no` is something the document prints that is not an item.
+    """
     log = to_skipped_log(pages, total, failures)
-    lines: list[list[str]] = [["Page", "Reason", "Text", "Confidence"]]
-    for row in log["rows"]:
-        confidence = row.get("confidence")
-        lines.append(
-            [
-                str(row["page"]),
-                row["what"],
-                row["text"],
-                "" if confidence is None else f"{confidence:.2f}",
-            ]
-        )
+    lines: list[list[str]] = [["Check", "Kind", "Pages", "Times", "Printed text", "Confidence"]]
+    for group in log["groups"]:
+        for entry in group["entries"]:
+            confidence = entry.get("confidence")
+            lines.append(
+                [
+                    "yes" if group["check"] else "no",
+                    group["what"],
+                    entry["pageRange"],
+                    str(entry["times"]),
+                    entry["text"],
+                    "" if confidence is None else f"{confidence:.2f}",
+                ]
+            )
     return csv_lines(lines)
 
 

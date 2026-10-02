@@ -34,6 +34,34 @@ interface ExportDockProps {
 /** Which panel the bar has open below it. One at a time: both read the same page. */
 type Panel = 'json' | 'log' | null
 
+/** One printed line the reader left out, and the pages it was printed on. */
+interface SkippedEntry {
+  text: string
+  pages: number[]
+  /** Those pages as a person writes them: `1-7`, `1-3, 5`. */
+  pageRange: string
+  times: number
+  confidence?: number
+}
+
+/** The lines of one kind, with what that kind is and whether it wants a look. */
+interface SkippedGroup {
+  reason: string
+  what: string
+  detail: string
+  check: boolean
+  lines: number
+  times: number
+  entries: SkippedEntry[]
+}
+
+/** The log as the reader shapes it. */
+interface SkippedLog {
+  failedPages?: number[]
+  needsChecking?: number
+  groups?: SkippedGroup[]
+}
+
 export function ExportDock({
   pages,
   total,
@@ -67,15 +95,24 @@ export function ExportDock({
   // rebuilt here so the rows on screen are the rows the download carries.
   const log = useMemo(() => {
     try {
-      return JSON.parse(logJson || '{}') as {
-        failedPages?: number[]
-        rows?: Array<{ page: number; reason: string; what: string; text: string; confidence?: number }>
-      }
+      return JSON.parse(logJson || '{}') as SkippedLog
     } catch {
       return {}
     }
   }, [logJson])
-  const logRows = log.rows ?? []
+  const logGroups = log.groups ?? []
+  const needsChecking = log.needsChecking ?? 0
+  const distinctLines = logGroups.reduce((count, group) => count + group.lines, 0)
+  // The log is fetched when the panel opens, so until it lands there is
+  // nothing to say. Saying "every printed line is in the data" before it
+  // arrives would be a claim the reader has not made.
+  const logArrived = logJson !== ''
+  // A PDF's own text is exact, so every line comes back at 100% and the
+  // column says nothing. It earns its place only when a recogniser read the
+  // page and the numbers differ.
+  const showConfidence = logGroups.some((group) =>
+    group.entries.some((entry) => entry.confidence !== undefined && entry.confidence < 1),
+  )
   // From the pages, not from the log: the chip in the bar is there before any
   // panel is opened, and the reader's log is only fetched once one is.
   const failed = failures.length
@@ -200,9 +237,17 @@ export function ExportDock({
         <DockPanel
           title="Skipped &amp; removed"
           count={
-            failed > 0
-              ? `${skipped} entries · ${failed} ${failed === 1 ? 'page' : 'pages'} not read`
-              : `${skipped} ${skipped === 1 ? 'entry' : 'entries'}`
+            // Lines once the log has arrived, because that is what the panel
+            // lists; the chip in the bar counts sightings, so both are named
+            // where they differ.
+            [
+              logArrived && distinctLines !== skipped
+                ? `${distinctLines} ${distinctLines === 1 ? 'line' : 'lines'} · printed ${skipped} times`
+                : `${skipped} ${skipped === 1 ? 'line' : 'lines'}`,
+              failed > 0 ? `${failed} ${failed === 1 ? 'page' : 'pages'} not read` : '',
+            ]
+              .filter(Boolean)
+              .join(' · ')
           }
           onClose={() => setPanel(null)}
           actions={
@@ -236,37 +281,61 @@ export function ExportDock({
             </>
           }
         >
-          <div className="table-responsive">
-            <table className="fields">
-              <thead>
-                <tr>
-                  {total > 1 && <th className="num">Page</th>}
-                  <th className="col--text">Reason</th>
-                  <th className="col--wide">Printed text</th>
-                  <th className="num">Conf.</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logRows.map((row, index) => (
-                  <tr
-                    key={`${row.page}-${index}`}
-                    className={row.reason === 'page-error' ? 'fields__row--flagged' : undefined}
-                  >
-                    {total > 1 && <td className="num">{row.page}</td>}
-                    <td className="col--text">{row.what}</td>
-                    {/* The printed line can run the width of the page; the cell
-                        shows what fits and the title holds the rest. */}
-                    <td className="col--wide log-text" title={row.text}>
-                      {row.text}
-                    </td>
-                    <td className="num">
-                      {row.confidence === undefined ? '—' : `${Math.round(row.confidence * 100)}%`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* What the reader left out, by kind rather than by sighting: the
+              same footer on seven pages is one line to judge, not seven. */}
+          <p className="log-summary">
+            {!logArrived
+              ? 'Reading the log…'
+              : distinctLines === 0
+                ? 'Every printed line is in the data.'
+                : needsChecking === 0
+                  ? `${distinctLines} printed ${distinctLines === 1 ? 'line is' : 'lines are'} not in the data, and none of them is an item.`
+                  : `${distinctLines} printed ${distinctLines === 1 ? 'line is' : 'lines are'} not in the data. ${needsChecking} ${needsChecking === 1 ? 'is' : 'are'} worth checking against the page.`}
+          </p>
+          {logGroups.map((group) => (
+            <section className="log-group" key={group.reason}>
+              <h3 className="log-group__head">
+                <span className={`log-group__what${group.check ? ' log-group__what--check' : ''}`}>
+                  {group.what}
+                </span>
+                <span className="count">
+                  {group.lines} {group.lines === 1 ? 'line' : 'lines'}
+                  {group.times > group.lines ? ` · printed ${group.times} times` : ''}
+                </span>
+              </h3>
+              <p className="log-group__detail">{group.detail}</p>
+              <div className="table-responsive">
+                <table className="fields">
+                  <thead>
+                    <tr>
+                      {total > 1 && <th className="num">Page</th>}
+                      <th className="col--wide">Printed text</th>
+                      {showConfidence && <th className="num">Conf.</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {group.entries.map((entry, index) => (
+                      <tr key={`${group.reason}-${index}`}>
+                        {total > 1 && <td className="num">{entry.pageRange}</td>}
+                        {/* The printed line can run the width of the page; the
+                            cell shows what fits and the title holds the rest. */}
+                        <td className="col--wide log-text" title={entry.text}>
+                          {entry.text}
+                        </td>
+                        {showConfidence && (
+                          <td className="num">
+                            {entry.confidence === undefined
+                              ? '—'
+                              : `${Math.round(entry.confidence * 100)}%`}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ))}
         </DockPanel>
       )}
     </>

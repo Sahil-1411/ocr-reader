@@ -61,8 +61,7 @@ def _without_overprints(words: Sequence[WordBox]) -> list[WordBox]:
     takes the letterhead for the column titles.
 
     Two real instances of a word stand side by side, so only a box sitting on
-    top of the one before it counts as a repeat. The same test `mergeGlyphs`
-    makes in `frontend/src/lib/pdf-text.ts`, for the same reason.
+    top of the one before it counts as a repeat.
     """
     kept: list[WordBox] = []
     for line in group_into_lines(words, 0.45):

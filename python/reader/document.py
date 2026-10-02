@@ -26,6 +26,7 @@ from .boxes import WordBox
 from .columns import ColumnGuide
 from .glyphs import merge_glyph_runs
 from .pdf_text import DPI, read_pdf, render_page, text_layer_is_usable
+from .skipped import PageLines, refine
 
 #: What a reader is: pixels in, word boxes out.
 Recogniser = Callable[[Any], list[WordBox]]
@@ -68,9 +69,24 @@ def read_document(
     rather than failing the whole document: the pages that could be read are
     worth having.
     """
-    if looks_like_pdf(data):
-        return _read_pdf_document(data, recognise, dpi, row_overlap_ratio)
-    return _read_image(data, recognise, row_overlap_ratio)
+    readings = (
+        _read_pdf_document(data, recognise, dpi, row_overlap_ratio)
+        if looks_like_pdf(data)
+        else _read_image(data, recognise, row_overlap_ratio)
+    )
+    # Last, and over the whole document: what a leftover line is often shows
+    # only beside the other pages. See `skipped.refine`.
+    refine(
+        [
+            PageLines(
+                number=reading.number,
+                skipped=reading.result.skipped,
+                body_left=reading.result.body_left,
+            )
+            for reading in readings
+        ]
+    )
+    return readings
 
 
 def _read_pdf_document(

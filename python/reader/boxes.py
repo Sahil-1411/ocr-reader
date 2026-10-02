@@ -4,11 +4,10 @@ The word box, and the two things every reader does with a page of them.
 This is the bottom of the Python reader: `glyphs`, `table`, `columns` and
 `rows` all stand on it, and none of them may import each other through it.
 
-A port of the same names in `frontend/src/ocr/layout/rows.ts`. Ported rather
-than reimplemented: the thresholds in the readers above are tuned against
-these exact definitions, and a line grouped a hair differently here moves a
-column edge there. Where the TypeScript sorts, this sorts the same way, and
-where it compares a ratio, this compares the same ratio.
+Change nothing here lightly. The thresholds in every reader above are tuned
+against these exact definitions, so a line grouped a hair differently here
+moves a column edge there, on documents this file never mentions. `pnpm
+corpus` is what says whether it did.
 """
 
 from __future__ import annotations

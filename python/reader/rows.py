@@ -2,9 +2,8 @@
 The lottery readers: an inventory sheet, a page of pack settlements, and a
 weekly invoice read as label-and-amount lines.
 
-A port of `frontend/src/ocr/layout/rows.ts`. The reasoning lives there, beside
-the rule it belongs to; what is repeated here is the arithmetic, because the
-readings have to agree.
+Each rule is argued for where it is written, below. These readers were ported
+from TypeScript, but this is now the only copy of them.
 
 `columns.py` reads the wholesale invoices this project is mostly pointed at.
 These readers are what `assemble.py` tries first, and what decides the kind of

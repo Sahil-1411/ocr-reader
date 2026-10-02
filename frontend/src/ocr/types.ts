@@ -71,8 +71,25 @@ export interface WordBox {
  * `note` is text cut out of a line that was kept; every other reason belongs
  * to a whole line the reader left out. A printed divider has no reason of its
  * own: a row of dashes is not data, and logging one would only bury the rest.
+ *
+ * `unplaced` is the one that might be data. The four the reader works out from
+ * the page's geometry — `annotation` (indented away from the items),
+ * `page-field` (printed on page after page), `margin` (outside the table) and
+ * `legend` (a key to the document's own marks) — are what it would otherwise
+ * have called `unplaced`, and each is named in `python/reader/skipped.py`.
+ * The wording shown for each comes from the reader, so this list is for
+ * reading a single line's reason and not for labelling it.
  */
-export type SkipReason = 'note' | 'furniture' | 'repeated-header' | 'summary' | 'unplaced'
+export type SkipReason =
+  | 'note'
+  | 'furniture'
+  | 'repeated-header'
+  | 'summary'
+  | 'unplaced'
+  | 'annotation'
+  | 'page-field'
+  | 'legend'
+  | 'margin'
 
 /** One line, or one piece of a line, that the reader did not keep. */
 export interface SkippedLine {

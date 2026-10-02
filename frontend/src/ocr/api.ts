@@ -97,8 +97,16 @@ interface PageJson {
   words: WordBox[]
 }
 
-/** Where `python/serve.py` answers. Same origin in dev and in production. */
-const READER = ''
+/**
+ * Where `python/serve.py` answers: the page's own origin, which is Vite's proxy
+ * in dev and the reader itself under `--live`. A build for a page hosted apart
+ * from its reader passes `VITE_DOC_READER_URL`; a trailing slash is dropped so
+ * either spelling of the same URL works.
+ *
+ * That reader also has to be started with `--origin <this page>`, or the
+ * browser refuses the request before it reaches it.
+ */
+const READER = (import.meta.env.VITE_DOC_READER_URL ?? '').replace(/\/+$/, '')
 
 /**
  * The picture of one page.

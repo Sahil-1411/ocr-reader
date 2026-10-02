@@ -9,7 +9,14 @@ column headers the ticket itself prints:
   "kind": "inventory",
   "headers": ["Game", "Name", "Int", "Rec", "Act", "Set"],
   "rows": [
-    { "Game": "815", "Name": "$1,000,000 JACKPOT", "Int": "000", "Rec": "002", "Act": "000", "Set": "001" }
+    {
+      "Game": "815",
+      "Name": "$1,000,000 JACKPOT",
+      "Int": "000",
+      "Rec": "002",
+      "Act": "000",
+      "Set": "001"
+    }
   ]
 }
 ```
@@ -88,14 +95,37 @@ uv pip install -r python/requirements.txt --excludes python/excludes.txt
 .venv/bin/python python/serve.py --live --warm
 ```
 
-`--live` listens on `0.0.0.0:8080` and serves `frontend/dist` together with `/read`.
-Open `http://<server>:8080`. Receipts uploaded there are read on that machine.
+`--live` listens on `0.0.0.0:8080` and serves `frontend/dist` together with the reader's own routes.
+Receipts uploaded there are read on that machine.
+
+Because that port faces a network, `--live` asks for a key, and prints one it
+generated if you did not give it one:
+
+```
+key: 9bT1s_4xQw…
+  open the app:   http://<server>:8080/?key=9bT1s_4xQw…
+  from a script:  -H "Authorization: Bearer <key>"
+```
+
+Open that URL once. The key moves into a cookie, the address bar goes back to
+`/`, and the app works normally from then on — nothing to paste again. Set your
+own with `--token` (or `OCR_READER_TOKEN`) so it survives a restart. `--open`
+serves with no key at all, for a network you trust and nothing else.
+
+On localhost — `pnpm reader`, and the Vite dev server in front of it — no key
+is asked for, because the only callers are on the same machine.
 
 Stop it with `lsof -ti tcp:8080 | xargs kill`. Pass `--port` to use another port.
 If a reverse proxy terminates HTTPS, forward the `Host` header. If the page is
 hosted on a different origin than the API, build the frontend with
-`VITE_PYTHON_READER_URL=https://api.example.com` and start the reader with
-`--origin https://app.example.com`.
+`VITE_DOC_READER_URL=https://api.example.com` and start the reader with
+`--origin https://app.example.com` — and put that reader behind your own proxy,
+since the cookie hand-off only reaches a browser the reader itself serves.
+
+One read runs at a time (the recogniser's model is not re-entrant), 8 wait in
+line, and past that the reader answers 503 so the upload can be retried. To
+serve more than one person at a time, run more than one reader behind a
+balancer rather than raising the queue.
 
 ## How it works
 

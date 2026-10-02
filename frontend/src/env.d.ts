@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_PYTHON_READER_URL?: string
+  readonly VITE_DOC_READER_URL?: string
 }

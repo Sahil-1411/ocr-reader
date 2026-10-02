@@ -41,7 +41,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev                    # the app, on http://localhost:5173
 ```
 
-The page calls `/document` and `/page` on its own host. Vite forwards those to the Python server.
+The page calls `/document`, `/export` and `/page` on its own host. Vite forwards those to the Python server.
 `serve.py` is the reader: without it the app says so and reads nothing, because there is no
 second reader to fall back to. See [`python/README.md`](python/README.md) for the engine and
 its scores.
@@ -103,7 +103,7 @@ hosted on a different origin than the API, build the frontend with
 browser: the file → POST /document
 python:  PDF text layer, or watermark suppression → PP-OCR → word boxes
          → glyphs joined → columns → rows → the receipt's own checks
-browser: draws the rows, and GET /page for the picture of each page
+browser: draws the rows, and GET /page for the picture of each PDF page
          → POST /export for the CSV or JSON, shaped by the reader
 ```
 
@@ -153,7 +153,7 @@ python/
     document.py         a whole file in, every page's reading out
     export.py           every page as one CSV or JSON, tables and log beside it
   tests/                the export, case by case
-  serve.py              the server: POST /document, GET /page (localhost, or --live)
+  serve.py              the server: POST /document, POST /export, GET /page
   read_receipt.py       the PP-OCR engine
   check_corpus.py       every document you keep, against how it last read
 frontend/src/

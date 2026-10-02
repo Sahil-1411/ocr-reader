@@ -324,7 +324,6 @@ button {
   transform: rotate(180deg);
 }
 
-
 /* Segmented Theme Switcher */
 .segmented {
   display: inline-flex;
@@ -1740,6 +1739,65 @@ button {
 }
 
 /*
+ * The log of what the reading left out, by kind.
+ *
+ * A heading per kind rather than a column of repeated reasons: the kinds mean
+ * different things, and only one of them — a line that could not be placed —
+ * is a reason to go back to the page. That one is marked, the rest are there
+ * to show the reading accounted for everything.
+ */
+.log-summary {
+  margin: 0 0 14px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.log-group {
+  margin: 0 0 18px;
+}
+
+.log-group:last-child {
+  margin-bottom: 0;
+}
+
+.log-group__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.log-group__what {
+  color: var(--text);
+}
+
+/* The one kind that might be data, so it is the one that stands out. */
+.log-group__what--check {
+  color: var(--warn-text);
+}
+
+.log-group__what--check::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--warn-text);
+  vertical-align: middle;
+}
+
+.log-group__detail {
+  margin: 0 0 8px;
+  max-width: 68ch;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/*
  * A table taken out of the export.
  *
  * Dimmed rather than hidden: the reader chose to leave it out of the JSON,
@@ -1884,6 +1942,7 @@ button {
 .dock-panel__body {
   overflow: auto;
   max-height: min(42vh, 340px);
+  padding: 12px;
 }
 
 .dock-panel__body .table-responsive {

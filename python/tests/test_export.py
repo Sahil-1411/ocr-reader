@@ -23,6 +23,7 @@ from reader.rows import InventoryRow, InvoiceField, SettlementRow  # noqa: E402
 from reader.export import (  # noqa: E402
     ExportPage,
     PageFailure,
+    page_range,
     extra_tables,
     to_csv,
     to_document_json,
@@ -351,10 +352,15 @@ class TestSkippedLog:
         assert log["pages"] == 3
         assert log["skipped"] == 3
         assert log["failedPages"] == [3]
-        assert log["rows"] == [
-            {"page": 1, "reason": "summary", "what": "Totals or subtotal line", "text": "TOTAL 173.53", "confidence": 0.9},
-            {"page": 2, "reason": "note", "what": "Note removed from the line", "text": "OUT OF STOCK", "confidence": 0.8},
-            {"page": 3, "reason": "page-error", "what": "Page produced no rows", "text": "Reading stopped before this page."},
+        assert [row["text"] for row in log["rows"]] == [
+            "TOTAL 173.53",
+            "OUT OF STOCK",
+            "Reading stopped before this page.",
+        ]
+        assert [row["what"] for row in log["rows"]] == [
+            "Total or subtotal",
+            "Note cut from an item",
+            "Page produced no rows",
         ]
 
     def test_says_nothing_was_skipped_when_every_line_was_kept(self):
@@ -362,6 +368,8 @@ class TestSkippedLog:
         assert log["skipped"] == 0
         assert "failedPages" not in log
         assert log["rows"] == []
+        assert log["groups"] == []
+        assert log["needsChecking"] == 0
 
     def test_writes_the_log_as_csv_quoting_a_line_with_a_comma(self):
         csv = to_skipped_csv(
@@ -370,7 +378,71 @@ class TestSkippedLog:
             [PageFailure(2, "Reading stopped before this page.")],
         )
         assert csv.split("\r\n") == [
-            "Page,Reason,Text,Confidence",
-            '1,Line that belongs to no item,"TERMS: NET 30, THEN 1.5%",0.50',
-            "2,Page produced no rows,Reading stopped before this page.,",
+            "Check,Kind,Pages,Times,Printed text,Confidence",
+            'yes,Not placed in a column,1,1,"TERMS: NET 30, THEN 1.5%",0.50',
+            "yes,Page produced no rows,2,1,Reading stopped before this page.,",
         ]
+
+
+class TestSkippedGroups:
+    """What the log looks like to somebody who did not write the reader."""
+
+    def test_one_line_printed_on_many_pages_is_one_entry(self):
+        # A footer on every page is one thing to judge, not seven.
+        pages = [
+            skipped_page(number, [SkippedLine("furniture", "CONFIRM", 1.0, 900)])
+            for number in range(1, 8)
+        ]
+        log = to_skipped_log(pages, 7)
+        assert log["skipped"] == 7
+        [group] = log["groups"]
+        [entry] = group["entries"]
+        assert entry["text"] == "CONFIRM"
+        assert entry["pageRange"] == "1-7"
+        assert entry["times"] == 7
+        assert group["lines"] == 1
+
+    def test_pages_read_as_a_person_writes_them(self):
+        assert page_range([4]) == "4"
+        assert page_range([1, 2, 3]) == "1-3"
+        assert page_range([1, 2, 3, 5]) == "1-3, 5"
+        assert page_range([5, 1, 2]) == "1-2, 5"
+        assert page_range([]) == ""
+
+    def test_the_kind_that_might_be_data_comes_first_and_is_marked(self):
+        log = to_skipped_log(
+            [
+                skipped_page(
+                    1,
+                    [
+                        SkippedLine("furniture", "Page 1 of 2", 1.0, 10),
+                        SkippedLine("summary", "TOTAL 173.53", 1.0, 20),
+                        SkippedLine("unplaced", "SOME STRAY LINE", 1.0, 30),
+                    ],
+                )
+            ],
+            1,
+        )
+        assert [group["what"] for group in log["groups"]] == [
+            "Not placed in a column",
+            "Total or subtotal",
+            "Page furniture",
+        ]
+        assert [group["check"] for group in log["groups"]] == [True, False, False]
+
+    def test_counts_what_wants_a_look_in_lines_not_in_sightings(self):
+        pages = [
+            skipped_page(number, [SkippedLine("unplaced", "A STRAY LINE", 1.0, 10)])
+            for number in range(1, 6)
+        ]
+        log = to_skipped_log(pages, 5)
+        assert log["skipped"] == 5
+        # One line, printed five times, is one thing to check.
+        assert log["needsChecking"] == 1
+
+    def test_a_page_that_produced_nothing_is_one_to_check(self):
+        log = to_skipped_log([], 2, [PageFailure(2, "Reading stopped before this page.")])
+        [group] = log["groups"]
+        assert group["what"] == "Page produced no rows"
+        assert group["check"] is True
+        assert log["needsChecking"] == 1

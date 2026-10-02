@@ -42,6 +42,11 @@ export interface ExtraTable {
 export interface ReadDocument {
   pages: DocumentPage[]
   extraTables: ExtraTable[]
+  /**
+   * Frees whatever is held for the pictures, for a document being replaced.
+   * Nothing to free when the pictures come from the reader.
+   */
+  release: () => void
 }
 
 /** One read page of the document, as the app holds it: edits and all. */
@@ -128,6 +133,12 @@ async function failure(response: Response): Promise<never> {
   throw new ReaderError(detail)
 }
 
+/** Whether the file is a PDF, by the same five bytes the reader looks at. */
+async function isPdf(file: Blob): Promise<boolean> {
+  const head = new Uint8Array(await file.slice(0, 5).arrayBuffer())
+  return String.fromCharCode(...head) === '%PDF-'
+}
+
 /** Read one file — a PDF or an image — and return every page of it. */
 export async function readDocument(file: Blob, signal?: AbortSignal): Promise<ReadDocument> {
   let response: Response
@@ -151,14 +162,25 @@ export async function readDocument(file: Blob, signal?: AbortSignal): Promise<Re
     pages: PageJson[]
     extraTables: ExtraTable[]
   }
+
+  // An image is its own picture, and the browser already has it. Asking the
+  // reader to send it back would be a quarter of a megabyte each way for a
+  // file sitting in memory. Only a PDF has pages the browser cannot draw.
+  const local = (await isPdf(file)) ? null : URL.createObjectURL(file)
+  const pictureOf = (page: number, width?: number) =>
+    local ?? pageImageUrl(body.document, page, width)
+
   return {
     extraTables: body.extraTables ?? [],
+    release: () => {
+      if (local) URL.revokeObjectURL(local)
+    },
     pages: body.pages.map((page) => ({
       page: page.page,
       size: page.size,
       words: page.words,
-      imageUrl: pageImageUrl(body.document, page.page),
-      thumbnailUrl: pageImageUrl(body.document, page.page, 200),
+      imageUrl: pictureOf(page.page),
+      thumbnailUrl: pictureOf(page.page, 200),
       result: {
         kind: page.kind,
         ...(page.title ? { title: page.title } : {}),

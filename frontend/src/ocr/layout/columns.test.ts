@@ -748,4 +748,202 @@ describe('assembleReceipt column tables', () => {
       '881-023234',
     ])
   })
+
+  it('keeps a pack size out of the one-letter column beside it', () => {
+    // A foodservice confirmation, at the 200 dpi the app reads a text layer
+    // at. ITEM DESCRIPTION is titled over the left of text that runs to within
+    // six pixels of TEMP, whose own values are a single letter; and the reason
+    // for a quantity change, and the order's own P.O. field, are printed in
+    // the table's own columns. Every size ran into TEMP, which read
+    // `18-12-1. D`; the reason was glued onto the item numbers above it; and
+    // the P.O. field was held as the first item's name and merged into it.
+    const line = (
+      y: number,
+      cells: ReadonlyArray<readonly [text: string, x: number, right: number]>,
+    ): WordBox[] =>
+      cells.map(([text, x, right]) => ({ text, x, y, width: right - x, height: 23.8, confidence: 1 }))
+    const table = readColumnTable([
+      ...line(474, [['MFG', 78, 120], ['ITEM', 316, 372], ['ORDER', 1114, 1184], ['SHIP', 1212, 1268], ['UNIT', 1324, 1380]]),
+      ...line(508, [['NUMBER', 78, 162], ['NUMBER', 316, 400], ['ITEM', 666, 724], ['DESCRIPTION', 731, 890], ['TEMP', 1044, 1100], ['QTY', 1128, 1170], ['QTY', 1212, 1254], ['PRICE', 1324, 1394]]),
+      // The order's P.O. field, set in the first two columns one line above
+      // the first item — exactly where a wrapped name would be.
+      ...line(641, [['P.O.:', 64, 134], ['WEB6842382', 302, 442]]),
+      // A size set after a double space, reaching under TEMP.
+      ...line(674, [['768123', 64, 148], ['633383', 302, 386], ['LIV', 568, 614], ['FHE', 621, 667], ['BLUE', 674, 735], ['RASPBERRY', 742, 881], ['EX', 888, 918], ['18-12-1.', 946, 1065], ['D', 1071, 1086], ['2', 1142, 1156], ['2', 1212, 1226], ['$403.9200', 1268, 1394]]),
+      // The same size a space after the name, so the line is one field.
+      ...line(707, [['783188', 64, 148], ['743029', 302, 386], ['LIV', 568, 614], ['FHE', 621, 667], ['EXTRA', 674, 751], ['STRENGTH,', 758, 896], ['CH', 903, 934], ['18-12-1.', 941, 1064], ['D', 1071, 1086], ['1', 1142, 1156], ['1', 1212, 1226], ['$403.9200', 1268, 1394]]),
+      ...line(1072, [['10033334', 64, 176], ['455422', 302, 386], ['PVM', 568, 614], ['AIR', 621, 667], ['AIRHEADS', 674, 797], ['SINGLES', 804, 912], ['W', 919, 934], ['12-36-0.', 941, 1064], ['D', 1071, 1086], ['1', 1142, 1156], ['0*', 1212, 1240], ['$82.0800', 1282, 1394]]),
+      // The reason, indented into the gutter after the first column.
+      ...line(1106, [['REASON', 204, 293], ['FOR', 300, 344], ['QUANTITY', 351, 470], ['ADJUSTMENT:', 476, 640], ['REPEATED', 646, 765], ['SUPPLIER', 772, 891], ['SHORTAGE', 897, 1016]]),
+      ...line(1138, [['10033339', 64, 176], ['455428', 302, 386], ['PVM', 568, 614], ['AIR', 621, 667], ['AIRHEADS', 674, 797], ['SINGLES', 804, 912], ['W', 919, 934], ['12-36-0.', 941, 1064], ['D', 1071, 1086], ['1', 1142, 1156], ['1', 1212, 1226], ['$82.0800', 1282, 1394]]),
+      // A unit after the size, the two of them a space apart.
+      ...line(1172, [['61034403', 64, 176], ['757234', 302, 386], ['COL', 568, 616], ['AJX', 623, 671], ['AJAX', 678, 741], ['CLN', 748, 796], ['12/21OZ', 803, 915], ['N', 922, 938], ['12-21', 945, 1024], ['OZ', 1031, 1063], ['D', 1070, 1086], ['1', 1142, 1156], ['1', 1212, 1226], ['$14.4400', 1282, 1394]]),
+      ...line(1238, [['2011506', 64, 162], ['498109', 302, 386], ['ASB', 568, 615], ['AGO', 622, 668], ['CORN', 675, 737], ['STARCH', 744, 838], ['12-16', 845, 922], ['OZ', 929, 960], ['D', 1072, 1086], ['10', 1128, 1156], ['10', 1198, 1226], ['$23.0400', 1282, 1394]]),
+      // A one-letter unit, a space from both the size and the temperature.
+      ...line(1304, [['302705', 64, 148], ['601558', 302, 386], ['MW', 568, 600], ['UBB', 608, 656], ['HB', 663, 696], ['SR', 703, 735], ['BLU', 743, 791], ['RASP', 798, 863], ['BBL', 870, 919], ['12-12-2', 926, 1039], ['O', 1047, 1063], ['D', 1070, 1086], ['1', 1142, 1156], ['1', 1212, 1226], ['$156.9600', 1268, 1394]]),
+      ...line(1338, [['14843000', 64, 176], ['693401', 302, 386], ['GCD', 568, 614], ['BUL', 621, 667], ['BUGLES', 674, 766], ['CTC', 773, 819], ['CRISPY', 826, 918], ['6-3', 946, 992], ['OZ', 999, 1030], ['D', 1072, 1086], ['2', 1142, 1156], ['2', 1212, 1226], ['$10.9600', 1282, 1394]]),
+    ])
+    // The titles are stacked on two baselines a line pitch apart, further
+    // than a word is tall: `MFG` over `NUMBER`, `ORDER` over `QTY`.
+    expect(table?.headers).toEqual([
+      'MFG NUMBER',
+      'ITEM NUMBER',
+      'ITEM DESCRIPTION',
+      'TEMP',
+      'ORDER QTY',
+      'SHIP QTY',
+      'UNIT PRICE',
+    ])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['768123', '633383', 'LIV FHE BLUE RASPBERRY EX 18-12-1.', 'D', '2', '2', '$403.9200'],
+      ['783188', '743029', 'LIV FHE EXTRA STRENGTH, CH 18-12-1.', 'D', '1', '1', '$403.9200'],
+      ['10033334', '455422', 'PVM AIR AIRHEADS SINGLES W 12-36-0.', 'D', '1', '0*', '$82.0800'],
+      ['10033339', '455428', 'PVM AIR AIRHEADS SINGLES W 12-36-0.', 'D', '1', '1', '$82.0800'],
+      ['61034403', '757234', 'COL AJX AJAX CLN 12/21OZ N 12-21 OZ', 'D', '1', '1', '$14.4400'],
+      ['2011506', '498109', 'ASB AGO CORN STARCH 12-16 OZ', 'D', '10', '10', '$23.0400'],
+      ['302705', '601558', 'MW UBB HB SR BLU RASP BBL 12-12-2 O', 'D', '1', '1', '$156.9600'],
+      ['14843000', '693401', 'GCD BUL BUGLES CTC CRISPY 6-3 OZ', 'D', '2', '2', '$10.9600'],
+    ])
+    // Neither the P.O. field nor the reason belongs to an item, and neither
+    // is lost either.
+    expect(table?.skipped.map((entry) => entry.text)).toEqual([
+      'P.O.:  WEB6842382',
+      'REASON FOR QUANTITY ADJUSTMENT: REPEATED SUPPLIER SHORTAGE',
+    ])
+  })
+
+  it('parts a description from a size column set hard against it', () => {
+    // A wholesale invoice set on a character grid. SIZE/FM is right-aligned
+    // under its own title and DESCRIPTION runs up to it, so the longest
+    // description and the widest size leave nine tenths of a pixel between
+    // them — narrower than the narrowest strip a gutter search will take. The
+    // edge stayed where the titles guessed it and cut the names in three:
+    // `*ACME POD 5%` | `CLASSIC TIN $23.99 6/4CT`.
+    //
+    // The category headings and the banner are set to a measure of their own,
+    // eleven characters into a description whose items start flush, and were
+    // read as the end of the item above. A third of the items carry a `*`,
+    // which sets them one character left of the rest; that alone had the
+    // column reading as ragged, with no left edge to measure an indent from.
+    //
+    // The grid and the layout are the invoice's own; the items are invented.
+    const PITCH = 19.21
+    const GLYPH = 19.05
+    const grid = (
+      y: number,
+      cells: ReadonlyArray<readonly [text: string, column: number]>,
+    ): WordBox[] =>
+      cells.map(([text, column]) => ({
+        text,
+        x: 66 + column * PITCH,
+        y,
+        width: text.length * GLYPH,
+        height: 30.6,
+        confidence: 1,
+      }))
+    const title = (
+      y: number,
+      cells: ReadonlyArray<readonly [text: string, x: number, right: number]>,
+    ): WordBox[] =>
+      cells.map(([text, x, right]) => ({ text, x, y, width: right - x, height: 22.2, confidence: 1 }))
+
+    const table = readColumnTable([
+      ...title(454, [
+        ['ITEM', 110, 163],
+        ['QTY', 251, 291],
+        ['DESCRIPTION', 409, 555],
+        ['SIZE/FM', 952, 1045],
+        ['UPC', 1157, 1197],
+        ['RETAIL', 1377, 1457],
+      ]),
+      // A banner across the table, set to the headings' own measure.
+      ...grid(493, [
+        ['********', 24],
+        ['THANK', 34],
+        ['YOU', 40],
+        ['FOR', 44],
+        ['YOUR', 48],
+        ['ORDER', 53],
+        ['********', 60],
+      ]),
+      // Starred: a character left of the rest. Its description ends at the
+      // column the widest size begins in.
+      ...grid(693, [
+        ['374256', 0],
+        ['18', 10],
+        ['*ACME', 13],
+        ['POD', 19],
+        ['5%', 23],
+        ['CLASSIC', 26],
+        ['TIN', 34],
+        ['$23.99', 38],
+        ['6/4CT', 46],
+        ['23.99', 68],
+      ]),
+      ...grid(726, [
+        ['374793', 0],
+        ['6', 11],
+        ['ACME', 14],
+        ['POD', 19],
+        ['5%', 23],
+        ['CLASSIC', 26],
+        ['TIN', 34],
+        ['1-PACK', 38],
+        ['8/1CT', 46],
+        ['108400482196', 52],
+        ['55.75', 68],
+      ]),
+      // A category heading over the items that follow it.
+      ...grid(826, [
+        ['HARBOR', 24],
+        ['FILTERED', 31],
+        ['CIGARS', 40],
+      ]),
+      // The widest size: it begins where the longest description ends.
+      ...grid(859, [
+        ['240945', 0],
+        ['5', 11],
+        ['*HARBOR', 13],
+        ['FILTERED', 21],
+        ['CIGARS', 30],
+        ['GRAPE', 37],
+        ['10/20CT', 44],
+        ['844504001480', 52],
+        ['9.99', 69],
+      ]),
+      ...grid(893, [
+        ['NOVA', 24],
+        ['ELECTRONIC', 30],
+      ]),
+      ...grid(926, [
+        ['345397', 0],
+        ['9', 11],
+        ['NOVA', 14],
+        ['PLUS', 19],
+        ['POUCH', 24],
+        ['CITRS', 30],
+        ['CHLL', 36],
+        ['9MG', 41],
+        ['5CT', 48],
+        ['840170618281', 52],
+        ['27.69', 68],
+      ]),
+    ])
+
+    expect(table?.headers).toEqual(['ITEM', 'QTY', 'DESCRIPTION', 'SIZE/FM', 'UPC', 'RETAIL'])
+    expect(table?.rows.map((row) => row.cells)).toEqual([
+      ['374256', '18', '*ACME POD 5% CLASSIC TIN $23.99', '6/4CT', '', '23.99'],
+      ['374793', '6', 'ACME POD 5% CLASSIC TIN 1-PACK', '8/1CT', '108400482196', '55.75'],
+      ['240945', '5', '*HARBOR FILTERED CIGARS GRAPE', '10/20CT', '844504001480', '9.99'],
+      ['345397', '9', 'NOVA PLUS POUCH CITRS CHLL 9MG', '5CT', '840170618281', '27.69'],
+    ])
+    // The headings and the banner belong to no item, and are not lost either.
+    // The banner's trailing rule falls in a column of its own, where a cell of
+    // pure punctuation is not a cell; what it says is kept.
+    expect(table?.skipped.map((entry) => entry.text)).toEqual([
+      '******** THANK YOU FOR YOUR ORDER',
+      'HARBOR FILTERED CIGARS',
+      'NOVA ELECTRONIC',
+    ])
+  })
 })

@@ -405,14 +405,67 @@ function findHeader(
       return hits.filter((word) => Math.abs(word.y + word.height / 2 - anchorCenter) <= reach)
     })
     .sort((a, b) => b.length - a.length)
+  /** The printed line directly above `top`, by the nearest baseline to it. */
+  const lineAbove = (top: number): WordBox[] => {
+    const above = words.filter(
+      (word) => word.text.trim().length > 0 && word.y + word.height / 2 < top,
+    )
+    if (above.length === 0) return []
+    const nearest = Math.max(...above.map((word) => word.y + word.height / 2))
+    return above.filter((word) => Math.abs(word.y + word.height / 2 - nearest) <= height * 0.5)
+  }
+
+  /**
+   * Whether `line` is the top of titles stacked over `columns`: every word of
+   * it set squarely over a column, and each over a column of its own.
+   *
+   * A line that merely happens to be printed above the titles fails both
+   * ways. `FOR DELIVERY DATE THURSDAY, AUGUST 13 / FRIDAY, AUGUST 14` puts
+   * four words over the description column and nothing over most of the
+   * others; a letterhead puts its words between the columns rather than over
+   * them.
+   */
+  const stacksOver = (line: readonly WordBox[], columns: readonly HeaderColumn[]): boolean => {
+    if (line.length === 0 || line.length > columns.length) return false
+    const taken = new Set<number>()
+    for (const word of line) {
+      const over = columns.flatMap((column, index) => {
+        const overlap = Math.min(word.x + word.width, column.right) - Math.max(word.x, column.x)
+        const narrower = Math.min(word.width, column.right - column.x)
+        return overlap > 0 && overlap >= narrower * 0.35 ? [index] : []
+      })
+      if (over.length !== 1 || taken.has(over[0]!)) return false
+      taken.add(over[0]!)
+    }
+    return true
+  }
+
   const titles = (group: readonly WordBox[]) => {
     if (group.length < 3) return null
-    const { bottom, words: headerWords } = bandOf(group)
-    if (headerWords.some((word) => /^\$?[\d,]*\d\.\d{2}$/.test(word.text.trim()))) return null
+    const { bottom, words: banded } = bandOf(group)
+    if (banded.some((word) => /^\$?[\d,]*\d\.\d{2}$/.test(word.text.trim()))) return null
     // Deeper than `nextLine`: telling two columns from one wrapped title takes
     // several rows, not the one line that scores the header.
     const body = words.filter((word) => word.y > bottom && word.y < bottom + height * 14)
-    const columns = groupHeaderColumns(headerWords, body)
+    let headerWords = banded
+    let columns = groupHeaderColumns(headerWords, body)
+    // Titles stacked on a line the hits did not reach.
+    //
+    // The band is as deep as a word is tall, and leading is not a fixed
+    // multiple of that: a PDF's text layer gives the font's size, a
+    // recogniser gives the ink's, and how far apart the lines are set is the
+    // printer's own business. A form set 12pt on 8.5pt type puts `MFG` over
+    // `NUMBER` and `ORDER` over `QTY` a line further than the band reaches,
+    // and the header read `NUMBER NUMBER ... QTY QTY`.
+    //
+    // So the line above is taken on the evidence rather than the distance,
+    // and a title three lines deep is reached a line at a time.
+    for (let again = 0; again < 2 && columns.length >= 3; again += 1) {
+      const above = lineAbove(Math.min(...headerWords.map((word) => word.y)))
+      if (!stacksOver(above, columns)) break
+      headerWords = [...headerWords, ...above]
+      columns = groupHeaderColumns(headerWords, body)
+    }
     if (columns.length < 3) return null
     const nextLine = words.filter((word) => word.y > bottom && word.y < bottom + height * 3)
     if (scoreHeader(columns, nextLine, 4) < 28) return null
@@ -753,8 +806,9 @@ function bucketsForLine(
       ? columns.flatMap((column, index) => (horizontalOverlap(field, column) > 0 ? [index] : []))
       : []
     // A name that starts under its title stays there, even when the words
-    // run into the gap. A phrase that crosses two titles is split per word.
-    if (hits.length === 1) {
+    // run into the gap. A phrase that crosses two titles is split per word,
+    // and so is one that merely reaches a title it did not start under.
+    if (hits.length === 1 && startsInColumn(field, bounds, hits[0]!, lineHeight * 0.5)) {
       buckets[hits[0]!]?.push(...field)
       continue
     }
@@ -895,7 +949,11 @@ function learnLayout(
       left,
       right: Math.max(...cells.map((cell) => Math.max(...cell.map((word) => word.x + word.width)))),
       // Most rows, not all: one odd row does not make a set column ragged.
-      aligned: lefts.filter((x) => x - left <= charWidth).length >= lefts.length * 0.75,
+      // Neither does a flag printed in the column's first position — `*JUUL
+      // POD 5%` beside `JUUL POD 5%` — which sets a third of the rows one
+      // character left of the rest and left the column reading as ragged,
+      // with nothing to measure an indent from.
+      aligned: lefts.filter((x) => x - left <= charWidth * 1.5).length >= lefts.length * 0.75,
       kind: kindOf(cells.map(joinWords), columns[index]?.label ?? ''),
       money: cells.filter((cell) => /\d\.\d{2}/.test(joinWords(cell))).length >= cells.length * 0.5,
     }
@@ -1050,8 +1108,13 @@ function refineBounds(
       const hits = columns.flatMap((column, index) =>
         horizontalOverlap(field, column) > 0 ? [index] : [],
       )
-      if (hits.length === 1) owned[hits[0]!]!.push(field)
-      else if (hits.length === 0) strays.push(field)
+      // A field that only reaches a title says nothing about where that
+      // column's own ink starts, and owning it would hide the gutter the edge
+      // belongs in — the one between a description and a one-letter TEMP.
+      if (hits.length === 1) {
+        if (startsInColumn(field, printed, hits[0]!, charWidth)) owned[hits[0]!]!.push(field)
+        else strays.push(field)
+      } else if (hits.length === 0) strays.push(field)
       else {
         for (const [index, part] of partsAcrossTitles(field, columns)) owned[index]!.push(part)
       }
@@ -1203,13 +1266,35 @@ function refineBounds(
     // In order: a clear gutter; any clear strip at all between the two sides'
     // own ink, when that is all a tightly set row leaves (it pins the edge);
     // and only then a gutter that tolerates an intruding row.
+    //
+    // A nudge takes the same first two, a proper gutter and then any clear
+    // strip: a column set as tight as a one-letter TEMP leaves six pixels
+    // beside the description, and those six pixels are still the edge. It
+    // never reaches for the third, because an edge the rows already agree
+    // with has no row to make an allowance for.
     const searches: Array<[allowed: number, narrowest: number]> = nudge
-      ? [[0, charWidth]]
+      ? [
+          [0, charWidth],
+          [0, 1],
+        ]
       : [
           [0, minGap],
           [0, 1],
           [tolerance, minGap],
         ]
+    // Words run on and figures do not: a description can be longer on the
+    // next page, an amount only a digit or two wider. So after a column of
+    // words the edge sits three characters short of the next column's ink,
+    // where the guide the next page reads with keeps a longer name on its
+    // side, and a page scanned a few millimetres left of the one before still
+    // keeps its figures on theirs.
+    const place = (start: number, end: number) => {
+      bounds[index] =
+        kinds[index - 1] === 'text'
+          ? end - Math.min((end - start) / 2, charWidth * 3)
+          : (start + end) / 2
+    }
+    let placed = false
     for (const [allowed, narrowest] of searches) {
       const admissible = gutters(from, to, allowed, narrowest).filter(
         (run) => run.start >= after && run.end <= before,
@@ -1220,19 +1305,31 @@ function refineBounds(
             .sort((a, b) => distance(a) - distance(b))[0]
         : admissible[0]
       if (!gutter) continue
-      // Words run on and figures do not: a description can be longer on the
-      // next page, an amount only a digit or two wider. So after a column of
-      // words the edge sits three characters short of the next column's ink,
-      // where the guide the next page reads with keeps a longer name on its
-      // side, and a page scanned a few millimetres left of the one before
-      // still keeps its figures on theirs.
-      const width = gutter.end - gutter.start
-      bounds[index] =
-        kinds[index - 1] === 'text'
-          ? gutter.end - Math.min(width / 2, charWidth * 3)
-          : (gutter.start + gutter.end) / 2
+      place(gutter.start, gutter.end)
+      placed = true
       break
     }
+    if (placed) continue
+
+    // Nothing to search for, and nothing that needs searching: the two
+    // columns' own ink is already apart, and anything between them parts the
+    // page correctly.
+    //
+    // A size column right-aligned under its own title is the case. Every row
+    // ends its description clear of every size, but by varying amounts — the
+    // longest description against the widest size leaves nine tenths of a
+    // pixel, which is narrower than the narrowest thing a gutter can be, so
+    // the search comes back empty and the edge stays where the titles guessed
+    // it: a third of the way through the names. `*JUUL POD 5% CLASSIC MEN
+    // $23.99  6/4CT` read as `*JUUL POD 5%` and `CLASSIC MEN $23.99 6/4CT`.
+    //
+    // What the rows agree on is not a strip of white — it is which side each
+    // column's own ink is on, and that is already known.
+    const last = ends[index - 1]!
+    const next = starts[index]!
+    if (!Number.isFinite(last) || !Number.isFinite(next) || last >= next) continue
+    if (next <= bounds[index - 1]! || last >= (printed[index + 1] ?? Infinity)) continue
+    place(last, next)
   }
   return bounds
 }
@@ -1274,12 +1371,41 @@ function placeLine(buckets: readonly WordBox[][], layout: TableLayout): 'text' |
       continue
     }
     if (figures) return null
+    // A column of codes carries codes, and a second line of one is a code
+    // too: a lot number set under an item number. `P.O.:` is the label of an
+    // order-level field printed over the table, and a label is not a code —
+    // there is no number in it. Position cannot tell the two apart, because
+    // the order's own fields are set in the table's first columns, exactly
+    // where a wrapped name would be.
+    if (profile?.kind === 'code' && !/\d/.test(text)) return null
     if (profile) {
       const start = Math.min(...inked.map((word) => word.x))
       const end = Math.max(...inked.map((word) => word.x + word.width))
-      // Centred or ragged text can start anywhere the column's text spans.
-      const fits =
-        profile.kind === 'code' || profile.aligned
+      // How far into a column a line may start and still be the rest of the
+      // line above it.
+      //
+      // Only where the column's own rows agree on a left edge is there
+      // anything to be far into. There, a turnover is set flush with the
+      // entry it continues or a space or two in — the `$10.00 OFF …` under a
+      // cigar box — while a heading is set to a measure of its own. `SENECA
+      // FILTERED CIGARS`, printed over the cigars eleven characters into a
+      // description whose items all start flush, is not the end of the item
+      // above it; nor is `******** THANK YOU FOR YOUR ORDER ********`.
+      //
+      // Codes are stricter still: a lot number starts exactly where the item
+      // numbers start, so a line that starts anywhere else in that column was
+      // set to something else — `REASON FOR QUANTITY ADJUSTMENT: REPEATED
+      // SUPPLIER SHORTAGE`, which begins in the gutter after the item numbers
+      // and runs clear across the table.
+      //
+      // Where the rows do not agree on a left edge the column's span is all
+      // there is to go on, because centred or ragged text can start anywhere
+      // its own text does.
+      const fits = profile.aligned
+        ? profile.kind === 'code'
+          ? Math.abs(start - profile.left) <= slack
+          : start >= profile.left - slack && start <= profile.left + slack * 4
+        : profile.kind === 'code'
           ? start >= profile.left - slack && start <= profile.right + slack
           : end >= profile.left - slack && start <= profile.right + slack
       if (!fits) return null
@@ -1331,15 +1457,25 @@ function partsAcrossTitles(
   if (field.length < 2) return []
   let at = -1
   let widest = 0
+  let runnerUp = 0
   for (let index = 1; index < field.length; index += 1) {
     const previous = field[index - 1]!
     const gap = field[index]!.x - (previous.x + previous.width)
     if (gap > widest) {
+      runnerUp = widest
       widest = gap
       at = index
-    }
+    } else if (gap > runnerUp) runnerUp = gap
   }
   if (at < 0 || widest <= 0) return []
+  // The cut has to be at a gap, not merely at the largest of several word
+  // spaces. `MW UBB HB SR BLU RASP BBL 12-12-2 O D` is set on a monospace
+  // grid where every gap is one space; cutting it at whichever space measured
+  // a pixel wider than the others made `O D` a column's own value, and the
+  // edge between the pack size and a one-letter TEMP was then learned from
+  // it. Two words have one gap and nothing to stand out from, and the cut
+  // between them is unambiguous.
+  if (field.length > 2 && widest < runnerUp * 1.5) return []
   const found: Array<[number, WordBox[]]> = []
   for (const half of [field.slice(0, at), field.slice(at)]) {
     const index = titleOf(half, columns)
@@ -1373,6 +1509,35 @@ function horizontalOverlap(field: readonly WordBox[], column: HeaderColumn): num
   const x = Math.min(...field.map((word) => word.x))
   const right = Math.max(...field.map((word) => word.x + word.width))
   return Math.min(right, column.right) - Math.max(x, column.x)
+}
+
+/**
+ * Whether a field begins in the column it overlaps, rather than merely
+ * reaching it.
+ *
+ * Overlapping a title is not the same as being set under it. A description's
+ * pack size, printed a double space after the name — `LIV FHE BLUE RASPBERRY
+ * EX  18-12-1.` — runs on past its own column and grazes the next title with
+ * its last characters. By overlap alone the whole field is that column's, and
+ * a one-letter TEMP column then reads `18-12-1. D`.
+ *
+ * Where a field starts says which column it was set in; where it ends only
+ * says how long it is. So the field is a column's own when it begins between
+ * that column's edges — which is what keeping it whole is for, a name that
+ * starts under its title and runs into the gap after it. A field that begins
+ * elsewhere is left to be placed word by word, each by the edge it falls on.
+ *
+ * Its first character, not its middle: a name set in one wide word is the
+ * width of the column it is in, and its centre lands well past the edge.
+ */
+function startsInColumn(
+  field: readonly WordBox[],
+  bounds: readonly number[],
+  index: number,
+  slack: number,
+): boolean {
+  const start = Math.min(...field.map((word) => word.x))
+  return start >= (bounds[index] ?? -Infinity) - slack && start < (bounds[index + 1] ?? Infinity)
 }
 
 /**

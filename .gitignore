@@ -37,6 +37,12 @@ frontend/tools/fixtures/ground-truth.json
 
 # Reader output: the contents of whatever receipt was last read.
 frontend/tools/out/
+
+# The regression corpus: whole customer invoices, account numbers and prices
+# included, plus the snapshot of how each one currently reads. Kept local for
+# the same reason as the samples above. `tools/corpus.test.ts` is committed and
+# skips when the directory is empty.
+frontend/tools/corpus/
 frontend/dist/
 
 # Python virtualenv for python/

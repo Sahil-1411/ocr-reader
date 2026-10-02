@@ -45,6 +45,26 @@ pnpm --dir frontend test     # unit tests + scoring against frontend/tools/fixtu
 pnpm --dir frontend build    # typecheck + production build
 ```
 
+### The regression corpus
+
+The readers take the layout from the page rather than from a template, so a rule that
+squares a column on one invoice decides a different column on the next. A change therefore
+cannot be judged on the document that prompted it.
+
+Put the documents you care about in `frontend/tools/corpus/` — it is excluded from the
+repository, like `public/samples/`, because they are whole invoices — and
+[`tools/corpus.test.ts`](frontend/tools/corpus.test.ts) records how each one reads. After
+that, any change that moves a row on any of them fails the test and prints the rows that
+moved, so an improvement on one form can be told apart from a regression on another.
+
+```bash
+pnpm --dir frontend exec vitest run tools/corpus.test.ts                 # what moved?
+UPDATE_CORPUS=1 pnpm --dir frontend exec vitest run tools/corpus.test.ts # record it
+```
+
+It is a diff, not a verdict: a failure may be exactly the change you wanted. With no corpus
+the test skips, so a fresh checkout still runs green.
+
 ## Put it on a server
 
 The server needs Python 3.12 and Node (to build the frontend). Upload this repo, then:
